@@ -22,26 +22,70 @@ let unsubData: (() => void) | null = null
 let unsubClosed: (() => void) | null = null
 let unsubError: (() => void) | null = null
 
-let pendingData: string[] = []
-let rafId: number | null = null
+let dataBuffer = ''
+let flushTimer: ReturnType<typeof setTimeout> | null = null
+let localEchoBuffer = ''
+let echoTimeout: ReturnType<typeof setTimeout> | null = null
 
-function flushPendingData() {
-  rafId = null
-  if (!terminal || pendingData.length === 0) {
-    pendingData.length = 0
-    return
+function isLocallyEchoable(data: string): boolean {
+  if (data.length === 0) return false
+  if (data.charCodeAt(0) === 0x1b) return false
+  for (const ch of data) {
+    const code = ch.charCodeAt(0)
+    if (code < 0x20 || code === 0x7f) return false
   }
-  if (pendingData.length === 1) {
-    terminal.write(pendingData[0])
-  } else {
-    terminal.write(pendingData.join(''))
-  }
-  pendingData.length = 0
+  return true
 }
 
-function scheduleFlush() {
-  if (rafId === null) {
-    rafId = requestAnimationFrame(flushPendingData)
+function suppressEcho(data: string): string {
+  if (localEchoBuffer.length === 0) return data
+
+  let dataPos = 0
+  let echoPos = 0
+
+  while (dataPos < data.length && echoPos < localEchoBuffer.length) {
+    if (data[dataPos] === '\x1b') {
+      const csi = data.substring(dataPos).match(/^\x1b\[[\d;]*[A-Za-z]/)
+      if (csi) {
+        dataPos += csi[0].length
+        continue
+      }
+      const ss3 = data.substring(dataPos).match(/^\x1b[O\[(]./)
+      if (ss3) {
+        dataPos += ss3[0].length
+        continue
+      }
+    }
+    if (data[dataPos] === localEchoBuffer[echoPos]) {
+      dataPos++
+      echoPos++
+    } else {
+      localEchoBuffer = ''
+      return data
+    }
+  }
+
+  localEchoBuffer = localEchoBuffer.substring(echoPos)
+  return data.substring(dataPos)
+}
+
+function flushDataBuffer() {
+  flushTimer = null
+  if (!terminal || dataBuffer.length === 0) {
+    dataBuffer = ''
+    return
+  }
+  const remaining = suppressEcho(dataBuffer)
+  dataBuffer = ''
+  if (remaining.length > 0) {
+    terminal.write(remaining)
+  }
+}
+
+function appendData(data: string) {
+  dataBuffer += data
+  if (flushTimer === null) {
+    flushTimer = setTimeout(flushDataBuffer, 0)
   }
 }
 
@@ -64,19 +108,27 @@ onMounted(async () => {
   terminal.writeln(`\x1b[1;34mConnecting to ${props.connectionName}...\x1b[0m\r\n`)
 
   terminal.onData((data) => {
+    if (isLocallyEchoable(data)) {
+      localEchoBuffer += data
+      terminal!.write(data)
+      if (echoTimeout) clearTimeout(echoTimeout)
+      echoTimeout = setTimeout(() => {
+        localEchoBuffer = ''
+        echoTimeout = null
+      }, 1000)
+    }
     window.liteSSH.sshWrite(props.sessionId, data)
   })
 
   unsubData = window.liteSSH.onSshData((sessionId, data) => {
     if (sessionId === props.sessionId) {
-      pendingData.push(data)
-      scheduleFlush()
+      appendData(data)
     }
   })
 
   unsubClosed = window.liteSSH.onSshClosed((sessionId) => {
     if (sessionId === props.sessionId && terminal) {
-      flushPendingData()
+      flushDataBuffer()
       terminal.writeln('\r\n\x1b[1;31m--- Connection closed ---\x1b[0m')
       emit('closed', sessionId)
     }
@@ -84,7 +136,7 @@ onMounted(async () => {
 
   unsubError = window.liteSSH.onSshError((sessionId, error) => {
     if (sessionId === props.sessionId && terminal) {
-      flushPendingData()
+      flushDataBuffer()
       terminal.writeln(`\r\n\x1b[1;31m--- Error: ${error} ---\x1b[0m`)
     }
   })
@@ -119,10 +171,14 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
-  if (rafId !== null) {
-    cancelAnimationFrame(rafId)
+  if (flushTimer !== null) {
+    clearTimeout(flushTimer)
   }
-  pendingData.length = 0
+  if (echoTimeout !== null) {
+    clearTimeout(echoTimeout)
+  }
+  dataBuffer = ''
+  localEchoBuffer = ''
   unsubData?.()
   unsubClosed?.()
   unsubError?.()
