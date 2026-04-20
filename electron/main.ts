@@ -14,7 +14,7 @@ let sshDataFlushScheduled = false
 function scheduleSshDataFlush() {
   if (sshDataFlushScheduled) return
   sshDataFlushScheduled = true
-  setImmediate(() => {
+  process.nextTick(() => {
     sshDataFlushScheduled = false
     for (const [sid, chunks] of sshDataBuffers) {
       if (chunks.length > 0) {
