@@ -1,0 +1,335 @@
+<script setup lang="ts">
+import { ref } from 'vue'
+import { Star, Edit, Delete, Plus } from '@element-plus/icons-vue'
+import type { Group } from '../env.d.ts'
+
+const UNGROUPED_ID = '__ungrouped__'
+
+const props = defineProps<{
+  groups: Group[]
+  activeGroupId: string | null
+  connectionCounts: Record<string, number>
+}>()
+
+const emit = defineEmits<{
+  (e: 'select', groupId: string): void
+  (e: 'add'): void
+  (e: 'rename', group: Group): void
+  (e: 'delete', groupId: string): void
+  (e: 'setDefault', groupId: string): void
+  (e: 'reorder', orderedIds: string[]): void
+}>()
+
+const editingId = ref<string | null>(null)
+const editingName = ref('')
+const dragIndex = ref<number | null>(null)
+const dropIndex = ref<number | null>(null)
+
+function startRename(group: Group) {
+  editingId.value = group.id
+  editingName.value = group.name
+}
+
+function finishRename(group: Group) {
+  if (editingName.value.trim() && editingName.value.trim() !== group.name) {
+    emit('rename', { ...group, name: editingName.value.trim() })
+  }
+  editingId.value = null
+}
+
+function cancelRename() {
+  editingId.value = null
+}
+
+function onDragStart(index: number) {
+  dragIndex.value = index
+}
+
+function onDragOver(e: DragEvent, index: number) {
+  e.preventDefault()
+  dropIndex.value = index
+}
+
+function onDragLeave() {
+  dropIndex.value = null
+}
+
+function onDrop(e: DragEvent, index: number) {
+  e.preventDefault()
+  if (dragIndex.value !== null && dragIndex.value !== index) {
+    const ids = props.groups.map((g) => g.id)
+    const [moved] = ids.splice(dragIndex.value, 1)
+    ids.splice(index, 0, moved)
+    emit('reorder', ids)
+  }
+  dragIndex.value = null
+  dropIndex.value = null
+}
+
+function onDragEnd() {
+  dragIndex.value = null
+  dropIndex.value = null
+}
+</script>
+
+<template>
+  <div class="group-panel">
+    <div class="group-panel-title">分组</div>
+    <div class="group-list">
+      <div
+        v-for="(group, index) in groups"
+        :key="group.id"
+        class="group-item"
+        :class="{
+          active: group.id === activeGroupId,
+          dragging: dragIndex === index,
+          'drop-above': dropIndex === index && dragIndex !== null && dragIndex < index,
+          'drop-below': dropIndex === index && dragIndex !== null && dragIndex > index,
+        }"
+        draggable="true"
+        @click="emit('select', group.id)"
+        @dragstart="onDragStart(index)"
+        @dragover="onDragOver($event, index)"
+        @dragleave="onDragLeave"
+        @drop="onDrop($event, index)"
+        @dragend="onDragEnd"
+      >
+        <div v-if="dropIndex === index && dragIndex !== null && dragIndex < index" class="drop-indicator top"></div>
+        <div class="group-item-content">
+          <span v-if="group.isDefault" class="default-star" title="默认分组">
+            <el-icon :size="12"><Star /></el-icon>
+          </span>
+          <template v-if="editingId === group.id">
+            <input
+              v-model="editingName"
+              class="rename-input"
+              @keyup.enter="finishRename(group)"
+              @keyup.escape="cancelRename"
+              @blur="finishRename(group)"
+              @click.stop
+            />
+          </template>
+          <template v-else>
+            <span class="group-name">{{ group.name }}</span>
+            <span class="group-count" v-if="connectionCounts[group.id]">{{ connectionCounts[group.id] }}</span>
+          </template>
+        </div>
+        <div v-if="editingId !== group.id" class="group-actions">
+          <el-tooltip content="重命名" placement="right">
+            <button class="icon-btn-tiny" @click.stop="startRename(group)">
+              <el-icon :size="12"><Edit /></el-icon>
+            </button>
+          </el-tooltip>
+          <el-tooltip v-if="!group.isDefault" content="设为默认" placement="right">
+            <button class="icon-btn-tiny" @click.stop="emit('setDefault', group.id)">
+              <el-icon :size="12"><Star /></el-icon>
+            </button>
+          </el-tooltip>
+          <el-tooltip content="删除" placement="right">
+            <button class="icon-btn-tiny danger" @click.stop="emit('delete', group.id)">
+              <el-icon :size="12"><Delete /></el-icon>
+            </button>
+          </el-tooltip>
+        </div>
+        <div v-if="dropIndex === index && dragIndex !== null && dragIndex > index" class="drop-indicator bottom"></div>
+      </div>
+
+      <div
+        class="group-item ungrouped"
+        :class="{ active: UNGROUPED_ID === activeGroupId }"
+        @click="emit('select', UNGROUPED_ID)"
+      >
+        <div class="group-item-content">
+          <span class="group-name">未分组</span>
+          <span class="group-count" v-if="connectionCounts[UNGROUPED_ID]">{{ connectionCounts[UNGROUPED_ID] }}</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="group-panel-footer">
+      <button class="add-group-btn" @click="emit('add')">
+        <el-icon><Plus /></el-icon>
+        <span>新建分组</span>
+      </button>
+    </div>
+  </div>
+</template>
+
+<style scoped>
+.group-panel {
+  width: 220px;
+  min-width: 220px;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-secondary);
+  border-right: 1px solid var(--border-color);
+  user-select: none;
+}
+
+.group-panel-title {
+  padding: 16px 16px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.group-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0 8px;
+}
+
+.group-item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.15s;
+  margin-bottom: 1px;
+}
+
+.group-item:hover {
+  background: var(--bg-tertiary);
+}
+
+.group-item.active {
+  background: var(--bg-tertiary);
+}
+
+.group-item.dragging {
+  opacity: 0.4;
+}
+
+.group-item-content {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  flex: 1;
+}
+
+.group-name {
+  font-size: 13px;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.group-count {
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: var(--accent-bg);
+  color: var(--accent);
+  font-size: 10px;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.default-star {
+  color: var(--warning);
+  display: flex;
+  align-items: center;
+}
+
+.group-actions {
+  display: flex;
+  gap: 1px;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.group-item:hover .group-actions {
+  opacity: 1;
+}
+
+.icon-btn-tiny {
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  padding: 3px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  transition: all 0.15s;
+}
+
+.icon-btn-tiny:hover {
+  color: var(--text-primary);
+  background: var(--hover-bg);
+}
+
+.icon-btn-tiny.danger:hover {
+  color: var(--danger);
+}
+
+.rename-input {
+  width: 100%;
+  padding: 2px 6px;
+  background: var(--bg-primary);
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  color: var(--text-primary);
+  font-size: 13px;
+  outline: none;
+}
+
+.drop-indicator {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: var(--accent);
+  border-radius: 1px;
+}
+
+.drop-indicator.top {
+  top: -1px;
+}
+
+.drop-indicator.bottom {
+  bottom: -1px;
+}
+
+.ungrouped {
+  cursor: default;
+}
+
+.group-panel-footer {
+  padding: 12px;
+  border-top: 1px solid var(--border-color);
+}
+
+.add-group-btn {
+  width: 100%;
+  padding: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  background: transparent;
+  color: var(--accent);
+  border: 1px dashed var(--border-color);
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.add-group-btn:hover {
+  background: var(--accent-bg);
+  border-color: var(--accent);
+}
+</style>
