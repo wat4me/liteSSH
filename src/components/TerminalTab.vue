@@ -4,6 +4,7 @@ import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { getTerminalColors } from '../composables/useTheme'
 import type { Theme } from '../composables/useTheme'
+import type { CustomColors } from '../composables/useTheme'
 
 const props = defineProps<{
   sessionId: string
@@ -16,6 +17,7 @@ const emit = defineEmits<{
 
 const terminalRef = ref<HTMLDivElement>()
 const theme = inject<import('vue').Ref<Theme>>('theme')!
+const customColors = inject<import('vue').Ref<CustomColors>>('customColors')!
 let terminal: Terminal | null = null
 let fitAddon: FitAddon | null = null
 let unsubData: (() => void) | null = null
@@ -96,7 +98,7 @@ onMounted(async () => {
     cursorBlink: true,
     fontSize: 14,
     fontFamily: 'Cascadia Code, Fira Code, Consolas, Courier New, monospace',
-    theme: getTerminalColors(theme.value),
+    theme: getTerminalColors(theme.value, customColors.value),
     allowProposedApi: true,
     scrollback: 5000,
   })

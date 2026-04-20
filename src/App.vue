@@ -7,6 +7,7 @@ import TerminalTab from './components/TerminalTab.vue'
 import { useTheme } from './composables/useTheme'
 import type { Connection } from './env.d.ts'
 import type { Theme } from './composables/useTheme'
+import type { CustomColors } from './composables/useTheme'
 
 const HOME_ID = '__home__'
 
@@ -25,13 +26,14 @@ interface ConnectionGroup {
   nextTabNumber: number
 }
 
-const { theme, setTheme, cycleTheme, themeLabels } = useTheme()
+const { theme, customColors } = useTheme()
 
 const connections = ref<Connection[]>([])
 const groups = ref<ConnectionGroup[]>([])
 const activeGroupId = ref<string>(HOME_ID)
 
 provide('theme', theme)
+provide('customColors', customColors)
 
 const isHomeActive = computed(() => activeGroupId.value === HOME_ID)
 
@@ -45,7 +47,11 @@ onMounted(async () => {
 })
 
 async function createSession(connectionId: string) {
-  const conn = connections.value.find((c) => c.id === connectionId)
+  let conn = connections.value.find((c) => c.id === connectionId)
+  if (!conn) {
+    connections.value = await window.liteSSH.getConnections()
+    conn = connections.value.find((c) => c.id === connectionId)
+  }
   if (!conn) return
 
   try {
@@ -175,8 +181,6 @@ function onSessionClosed(sessionId: string) {
         @select="onSelectGroup"
         @close="onCloseGroup"
         @select-home="onSelectHome"
-        @cycle-theme="cycleTheme"
-        @set-theme="setTheme"
       />
 
       <ConnectionsView
