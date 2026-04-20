@@ -5,7 +5,8 @@
 }
 
 html:not([data-theme]),
-[data-theme="dark"] {
+[data-theme="dark"],
+[data-theme="custom"] {
   --bg-primary: #0d1117;
   --bg-secondary: #161b22;
   --bg-tertiary: #21262d;

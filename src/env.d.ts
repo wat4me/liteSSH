@@ -23,7 +23,7 @@ declare global {
       onSshClosed: (callback: (sessionId: string) => void) => () => void
       onSshError: (callback: (sessionId: string, error: string) => void) => () => void
 
-      updateTitleBar: (theme: string) => void
+      updateTitleBar: (theme: string, colors?: { color: string; symbolColor: string }) => void
     }
   }
 }

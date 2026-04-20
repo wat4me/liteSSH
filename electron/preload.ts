@@ -33,5 +33,5 @@ contextBridge.exposeInMainWorld('liteSSH', {
     return () => ipcRenderer.removeListener('ssh:error', listener)
   },
 
-  updateTitleBar: (theme: string) => ipcRenderer.send('titlebar:theme', theme),
+  updateTitleBar: (theme: string, colors?: { color: string; symbolColor: string }) => ipcRenderer.send('titlebar:theme', theme, colors),
 })

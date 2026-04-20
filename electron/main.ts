@@ -102,13 +102,16 @@ app.on('before-quit', () => {
   sshManager.disconnectAll()
 })
 
-ipcMain.on('titlebar:theme', (_event, theme: string) => {
-  const colors = titleBarThemes[theme] || titleBarThemes.dark
+ipcMain.on('titlebar:theme', (_event, theme: string, colors?: { color: string; symbolColor: string }) => {
+  let finalColors = titleBarThemes[theme as keyof typeof titleBarThemes] || titleBarThemes.dark
+  if (theme === 'custom' && colors) {
+    finalColors = colors
+  }
   mainWindow?.setTitleBarOverlay({
-    color: colors.color,
-    symbolColor: colors.symbolColor,
+    color: finalColors.color,
+    symbolColor: finalColors.symbolColor,
   })
-  mainWindow?.setBackgroundColor(colors.color)
+  mainWindow?.setBackgroundColor(finalColors.color)
 })
 
 ipcMain.handle('store:getConnections', () => {
