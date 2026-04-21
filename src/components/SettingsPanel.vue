@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { ref, watch, onMounted } from 'vue'
 import { useTheme } from '../composables/useTheme'
 import type { Theme, CustomColors } from '../composables/useTheme'
 
@@ -11,10 +11,15 @@ const emit = defineEmits<{
 
 const localBgColor = ref(customColors.value.bgColor)
 const localFontColor = ref(customColors.value.fontColor)
+const downloadPath = ref('')
 
 watch(() => customColors.value, (val) => {
   localBgColor.value = val.bgColor
   localFontColor.value = val.fontColor
+})
+
+onMounted(async () => {
+  downloadPath.value = await window.liteSSH.getDownloadPath()
 })
 
 function selectTheme(t: Theme) {
@@ -34,6 +39,19 @@ function onFontColorChange(e: Event) {
   const value = (e.target as HTMLInputElement).value
   localFontColor.value = value
   setCustomColors({ fontColor: value, bgColor: localBgColor.value })
+}
+
+async function selectDownloadDirectory() {
+  const dir = await window.liteSSH.selectDirectory()
+  if (dir) {
+    downloadPath.value = dir
+    await window.liteSSH.setDownloadPath(dir)
+  }
+}
+
+async function resetDownloadPath() {
+  await window.liteSSH.setDownloadPath('')
+  downloadPath.value = await window.liteSSH.getDownloadPath()
 }
 
 const themeSwatches: Record<Theme, { bg: string; fg: string }> = {
@@ -108,6 +126,15 @@ const themeSwatches: Record<Theme, { bg: string; fg: string }> = {
       </div>
       <div class="color-preview" :style="{ backgroundColor: localBgColor, color: localFontColor }">
         预览效果 Preview
+      </div>
+    </div>
+
+    <div class="settings-section">
+      <div class="settings-label">下载路径</div>
+      <div class="download-path-row">
+        <span class="download-path-text" :title="downloadPath">{{ downloadPath }}</span>
+        <button class="download-path-btn" @click="selectDownloadDirectory" title="选择目录">浏览</button>
+        <button class="download-path-btn download-path-reset" @click="resetDownloadPath" title="重置为默认">重置</button>
       </div>
     </div>
   </div>
@@ -261,5 +288,48 @@ const themeSwatches: Record<Theme, { bg: string; fg: string }> = {
   font-weight: 500;
   text-align: center;
   border: 1px solid var(--border-color);
+}
+
+.download-path-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.download-path-text {
+  flex: 1;
+  font-size: 11px;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+  min-width: 0;
+}
+
+.download-path-btn {
+  padding: 3px 8px;
+  font-size: 11px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  color: var(--text-primary);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+
+.download-path-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.download-path-reset {
+  color: var(--text-secondary);
+}
+
+.download-path-reset:hover {
+  color: var(--danger);
+  border-color: var(--danger);
 }
 </style>

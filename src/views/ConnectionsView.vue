@@ -237,6 +237,8 @@ onBeforeUnmount(() => {
     clearTimeout(timer)
   }
 })
+
+defineExpose({ loadData })
 </script>
 
 <template>

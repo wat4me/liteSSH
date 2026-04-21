@@ -2,6 +2,7 @@
   --sidebar-width: 280px;
   --tab-height: 38px;
   --titlebar-height: 36px;
+  --file-sidebar-width: 260px;
 }
 
 html:not([data-theme]),

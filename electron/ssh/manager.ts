@@ -1,4 +1,6 @@
-import { Client, ClientChannel, ConnectConfig } from 'ssh2'
+import { Client, ClientChannel, ConnectConfig, SFTPWrapper } from 'ssh2'
+import * as fs from 'fs'
+import * as path from 'path'
 import { v4 as uuidv4 } from 'uuid'
 
 interface Connection {
@@ -16,6 +18,7 @@ interface Session {
   stream: ClientChannel
   connectionId: string
   connectionName: string
+  sftp?: SFTPWrapper
 }
 
 interface SSHCallbacks {
@@ -24,8 +27,34 @@ interface SSHCallbacks {
   onError: (sessionId: string, error: string) => void
 }
 
+export interface FileEntry {
+  name: string
+  path: string
+  isDirectory: boolean
+  isSymlink: boolean
+  size: number
+  modifyTime: number
+  permissions: string
+}
+
+export interface StatsInfo {
+  size: number
+  modifyTime: number
+  isDirectory: boolean
+  isFile: boolean
+  isSymlink: boolean
+  permissions: string
+}
+
+interface ActiveTransfer {
+  readStream: import('stream').Readable
+  writeStream: import('fs').WriteStream
+  cancelled: boolean
+}
+
 export class SSHManager {
   private sessions: Map<string, Session> = new Map()
+  private activeTransfers: Map<string, ActiveTransfer> = new Map()
 
   connect(connection: Connection, callbacks: SSHCallbacks): Promise<string> {
     return new Promise((resolve, reject) => {
@@ -68,7 +97,7 @@ export class SSHManager {
             })
 
             stream.on('close', () => {
-              this.sessions.delete(sessionId)
+              this.cleanupSession(sessionId)
               client.end()
               callbacks.onClose(sessionId)
             })
@@ -90,7 +119,7 @@ export class SSHManager {
 
       client.on('close', () => {
         if (this.sessions.has(sessionId)) {
-          this.sessions.delete(sessionId)
+          this.cleanupSession(sessionId)
           callbacks.onClose(sessionId)
         }
       })
@@ -102,9 +131,8 @@ export class SSHManager {
   disconnect(sessionId: string) {
     const session = this.sessions.get(sessionId)
     if (session) {
-      session.stream.close()
+      this.cleanupSession(sessionId)
       session.client.end()
-      this.sessions.delete(sessionId)
     }
   }
 
@@ -139,4 +167,250 @@ export class SSHManager {
       connectionId: s.connectionId,
     }))
   }
+
+  private cleanupSession(sessionId: string) {
+    const session = this.sessions.get(sessionId)
+    if (session?.sftp) {
+      try {
+        session.sftp.end()
+      } catch {}
+    }
+    this.sessions.delete(sessionId)
+  }
+
+  // SFTP Methods
+
+  async initSftp(sessionId: string): Promise<void> {
+    const session = this.sessions.get(sessionId)
+    if (!session) throw new Error('Session not found')
+    if (session.sftp) return
+
+    return new Promise((resolve, reject) => {
+      session.client.sftp((err, sftp) => {
+        if (err) {
+          reject(new Error(`SFTP init error: ${err.message}`))
+        } else {
+          session.sftp = sftp
+          resolve()
+        }
+      })
+    })
+  }
+
+  async sftpReaddir(sessionId: string, remotePath: string): Promise<FileEntry[]> {
+    const session = this.sessions.get(sessionId)
+    if (!session?.sftp) throw new Error('SFTP not initialized')
+
+    return new Promise((resolve, reject) => {
+      session.sftp!.readdir(remotePath, (err, list) => {
+        if (err) {
+          reject(new Error(`Readdir error: ${err.message}`))
+          return
+        }
+
+        const entries: FileEntry[] = list.map((entry) => {
+          const longname = entry.longname || ''
+          const firstChar = longname[0] || '-'
+          const isDirectory = firstChar === 'd'
+          const isSymlink = firstChar === 'l'
+          const permissions = longname.substring(0, 10) || '----------'
+          const entryPath = remotePath === '/' ? `/${entry.filename}` : `${remotePath}/${entry.filename}`
+
+          return {
+            name: entry.filename,
+            path: entryPath,
+            isDirectory,
+            isSymlink,
+            size: entry.attrs.size || 0,
+            modifyTime: (entry.attrs.mtime || 0) * 1000,
+            permissions,
+          }
+        })
+
+        entries.sort((a, b) => {
+          if (a.name === '..' || a.name === '.') return -1
+          if (b.name === '..' || b.name === '.') return 1
+          if (a.isDirectory && !b.isDirectory) return -1
+          if (!a.isDirectory && b.isDirectory) return 1
+          return a.name.localeCompare(b.name)
+        })
+
+        resolve(entries)
+      })
+    })
+  }
+
+  async sftpStat(sessionId: string, remotePath: string): Promise<StatsInfo> {
+    const session = this.sessions.get(sessionId)
+    if (!session?.sftp) throw new Error('SFTP not initialized')
+
+    return new Promise((resolve, reject) => {
+      session.sftp!.stat(remotePath, (err, stats) => {
+        if (err) {
+          reject(new Error(`Stat error: ${err.message}`))
+          return
+        }
+
+        const mode = stats.mode || 0
+        const isDir = stats.isDirectory()
+        const isFile = stats.isFile()
+        const isLink = stats.isSymbolicLink()
+        const perms = modeToFileMode(mode, isDir)
+
+        resolve({
+          size: stats.size || 0,
+          modifyTime: (stats.mtime || 0) * 1000,
+          isDirectory: isDir,
+          isFile: isFile,
+          isSymlink: isLink,
+          permissions: perms,
+        })
+      })
+    })
+  }
+
+  async sftpRealpath(sessionId: string, remotePath: string): Promise<string> {
+    const session = this.sessions.get(sessionId)
+    if (!session?.sftp) throw new Error('SFTP not initialized')
+
+    return new Promise((resolve, reject) => {
+      session.sftp!.realpath(remotePath, (err, absPath) => {
+        if (err) {
+          reject(new Error(`Realpath error: ${err.message}`))
+        } else {
+          resolve(absPath)
+        }
+      })
+    })
+  }
+
+  sftpDownload(
+    sessionId: string,
+    remotePath: string,
+    localPath: string,
+    transferId: string,
+    onProgress: (transferred: number, total: number) => void
+  ): Promise<void> {
+    const session = this.sessions.get(sessionId)
+    if (!session?.sftp) return Promise.reject(new Error('SFTP not initialized'))
+
+    return new Promise((resolve, reject) => {
+      session.sftp!.stat(remotePath, (statErr, stats) => {
+        if (statErr) {
+          reject(new Error(`Stat error: ${statErr.message}`))
+          return
+        }
+
+        const totalSize = stats.size || 0
+
+        const localDir = path.dirname(localPath)
+        try {
+          fs.mkdirSync(localDir, { recursive: true })
+        } catch (mkdirErr: any) {
+          reject(new Error(`Cannot create directory: ${mkdirErr.message}`))
+          return
+        }
+
+        const readStream = session.sftp!.createReadStream(remotePath)
+        const writeStream = fs.createWriteStream(localPath)
+
+        const transfer: ActiveTransfer = {
+          readStream,
+          writeStream,
+          cancelled: false,
+        }
+        this.activeTransfers.set(transferId, transfer)
+
+        let transferred = 0
+
+        readStream.on('data', (chunk: Buffer) => {
+          transferred += chunk.length
+          onProgress(transferred, totalSize)
+        })
+
+        readStream.on('error', (err) => {
+          this.activeTransfers.delete(transferId)
+          writeStream.close()
+          if (!transfer.cancelled) {
+            try {
+              fs.unlinkSync(localPath)
+            } catch {}
+            reject(new Error(`Download error: ${err.message}`))
+          }
+        })
+
+        writeStream.on('error', (err) => {
+          this.activeTransfers.delete(transferId)
+          readStream.destroy()
+          if (!transfer.cancelled) {
+            reject(new Error(`Write error: ${err.message}`))
+          }
+        })
+
+        writeStream.on('finish', () => {
+          this.activeTransfers.delete(transferId)
+          if (transfer.cancelled) {
+            try {
+              fs.unlinkSync(localPath)
+            } catch {}
+            reject(new Error('Transfer cancelled'))
+          } else {
+            resolve()
+          }
+        })
+
+        readStream.pipe(writeStream)
+      })
+    })
+  }
+
+  cancelTransfer(transferId: string) {
+    const transfer = this.activeTransfers.get(transferId)
+    if (transfer) {
+      transfer.cancelled = true
+      transfer.readStream.destroy()
+      transfer.writeStream.destroy()
+      this.activeTransfers.delete(transferId)
+    }
+  }
+
+  async sftpExec(sessionId: string, command: string): Promise<string> {
+    const session = this.sessions.get(sessionId)
+    if (!session) throw new Error('Session not found')
+
+    return new Promise((resolve, reject) => {
+      session.client.exec(command, (err, stream) => {
+        if (err) {
+          reject(new Error(`Exec error: ${err.message}`))
+          return
+        }
+
+        let output = ''
+        stream.on('data', (data: Buffer) => {
+          output += data.toString('utf-8')
+        })
+        stream.stderr.on('data', (data: Buffer) => {
+          output += data.toString('utf-8')
+        })
+        stream.on('close', () => {
+          resolve(output.trim())
+        })
+      })
+    })
+  }
+}
+
+function modeToFileMode(mode: number, isDir: boolean): string {
+  const type = isDir ? 'd' : '-'
+  const owner = modeToFileBits((mode >> 6) & 7)
+  const group = modeToFileBits((mode >> 3) & 7)
+  const other = modeToFileBits(mode & 7)
+  return type + owner + group + other
+}
+
+function modeToFileBits(bits: number): string {
+  const r = (bits & 4) ? 'r' : '-'
+  const w = (bits & 2) ? 'w' : '-'
+  const x = (bits & 1) ? 'x' : '-'
+  return r + w + x
 }

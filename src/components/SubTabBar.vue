@@ -50,8 +50,10 @@ const emit = defineEmits<{
 .sub-tabs-scroll {
   display: flex;
   height: 100%;
+  flex: 1;
   align-items: center;
   gap: 2px;
+  overflow: hidden;
 }
 
 .sub-tab {
@@ -67,6 +69,7 @@ const emit = defineEmits<{
   transition: all 0.15s;
   user-select: none;
   background: transparent;
+  flex-shrink: 0;
 }
 
 .sub-tab:hover {
@@ -121,6 +124,7 @@ const emit = defineEmits<{
   color: var(--text-secondary);
   cursor: pointer;
   transition: all 0.15s;
+  flex-shrink: 0;
 }
 
 .sub-tab-add:hover {

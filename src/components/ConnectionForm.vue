@@ -25,6 +25,25 @@ const form = ref({
 const groups = ref<Group[]>([])
 const saving = ref(false)
 
+type TestState = 'idle' | 'testing' | 'success' | 'error'
+const testState = ref<TestState>('idle')
+const testLatency = ref(0)
+const testError = ref('')
+let testTimer: ReturnType<typeof setTimeout> | null = null
+
+type DiagnoseState = 'idle' | 'testing' | 'success' | 'error'
+interface DiagnoseResult {
+  ok: boolean
+  tcpLatency?: number
+  sshReadyLatency?: number
+  shellOpenLatency?: number
+  shellFirstByteLatency?: number
+  totalLatency?: number
+  error?: string
+}
+const diagnoseState = ref<DiagnoseState>('idle')
+const diagnoseResult = ref<DiagnoseResult | null>(null)
+
 onMounted(async () => {
   groups.value = await window.liteSSH.getGroups()
 
@@ -78,6 +97,85 @@ async function handleSave() {
     saving.value = false
   }
 }
+
+async function handleTest() {
+  if (!form.value.host.trim()) {
+    ElMessage.warning('请输入主机地址')
+    return
+  }
+  if (!form.value.username.trim()) {
+    ElMessage.warning('请输入用户名')
+    return
+  }
+
+  if (testTimer) {
+    clearTimeout(testTimer)
+    testTimer = null
+  }
+
+  testState.value = 'testing'
+  testLatency.value = 0
+  testError.value = ''
+
+  try {
+    const result = await window.liteSSH.sshTestConnectionParams({
+      host: form.value.host.trim(),
+      port: form.value.port,
+      username: form.value.username.trim(),
+      password: form.value.password,
+    })
+    if (result.ok) {
+      testState.value = 'success'
+      testLatency.value = result.latency || 0
+    } else {
+      testState.value = 'error'
+      testError.value = result.error || '连接失败'
+    }
+  } catch (err: any) {
+    testState.value = 'error'
+    testError.value = err.message || '测试失败'
+  }
+
+  testTimer = setTimeout(() => {
+    testState.value = 'idle'
+    testTimer = null
+  }, 10000)
+}
+
+async function handleDiagnose() {
+  if (!form.value.host.trim()) {
+    ElMessage.warning('请输入主机地址')
+    return
+  }
+  if (!form.value.username.trim()) {
+    ElMessage.warning('请输入用户名')
+    return
+  }
+
+  diagnoseState.value = 'testing'
+  diagnoseResult.value = null
+
+  try {
+    const result = await window.liteSSH.sshDiagnoseConnectionParams({
+      host: form.value.host.trim(),
+      port: form.value.port,
+      username: form.value.username.trim(),
+      password: form.value.password,
+    })
+    diagnoseResult.value = result
+    diagnoseState.value = result.ok ? 'success' : 'error'
+  } catch (err: any) {
+    diagnoseState.value = 'error'
+    diagnoseResult.value = {
+      ok: false,
+      error: err.message || '诊断失败',
+    }
+  }
+}
+
+function formatLatency(value?: number): string {
+  return typeof value === 'number' ? `${value} ms` : '--'
+}
 </script>
 
 <template>
@@ -118,10 +216,57 @@ async function handleSave() {
         </div>
 
         <div class="form-actions">
-          <button type="button" class="btn-cancel" @click="emit('cancel')">取消</button>
-          <button type="submit" class="btn-save" :disabled="saving">
-            {{ saving ? '保存中...' : '保存' }}
-          </button>
+          <div class="form-actions-left">
+            <button type="button" class="btn-test" :disabled="testState === 'testing'" @click="handleTest">
+              <template v-if="testState === 'testing'">
+                <span class="spinner"></span> 测试中...
+              </template>
+              <template v-else-if="testState === 'success'">
+                ✅ {{ testLatency }}ms
+              </template>
+              <template v-else-if="testState === 'error'">
+                ❌ {{ testError }}
+              </template>
+              <template v-else>
+                测试连接
+              </template>
+            </button>
+            <button type="button" class="btn-test" :disabled="diagnoseState === 'testing'" @click="handleDiagnose">
+              <template v-if="diagnoseState === 'testing'">
+                <span class="spinner"></span> 诊断中...
+              </template>
+              <template v-else>
+                延迟诊断
+              </template>
+            </button>
+          </div>
+          <div class="form-actions-right">
+            <button type="button" class="btn-cancel" @click="emit('cancel')">取消</button>
+            <button type="submit" class="btn-save" :disabled="saving">
+              {{ saving ? '保存中...' : '保存' }}
+            </button>
+          </div>
+        </div>
+
+        <div v-if="diagnoseResult" class="diagnose-panel">
+          <div class="diagnose-title">
+            连接延迟诊断
+            <span v-if="diagnoseResult.ok" class="diagnose-ok">成功</span>
+            <span v-else class="diagnose-fail">失败</span>
+          </div>
+          <div class="diagnose-grid">
+            <span class="diag-label">TCP 建连</span>
+            <span class="diag-value">{{ formatLatency(diagnoseResult.tcpLatency) }}</span>
+            <span class="diag-label">SSH Ready</span>
+            <span class="diag-value">{{ formatLatency(diagnoseResult.sshReadyLatency) }}</span>
+            <span class="diag-label">Shell 打开</span>
+            <span class="diag-value">{{ formatLatency(diagnoseResult.shellOpenLatency) }}</span>
+            <span class="diag-label">Shell 首字节</span>
+            <span class="diag-value">{{ formatLatency(diagnoseResult.shellFirstByteLatency) }}</span>
+            <span class="diag-label">总耗时</span>
+            <span class="diag-value">{{ formatLatency(diagnoseResult.totalLatency) }}</span>
+          </div>
+          <div v-if="diagnoseResult.error" class="diagnose-error">原因：{{ diagnoseResult.error }}</div>
         </div>
       </form>
     </div>
@@ -224,9 +369,20 @@ async function handleSave() {
 
 .form-actions {
   display: flex;
-  justify-content: flex-end;
-  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
   margin-top: 8px;
+}
+
+.form-actions-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.form-actions-right {
+  display: flex;
+  gap: 12px;
 }
 
 .btn-cancel {
@@ -261,5 +417,91 @@ async function handleSave() {
 .btn-save:disabled {
   opacity: 0.6;
   cursor: not-allowed;
+}
+
+.btn-test {
+  padding: 8px 16px;
+  background: none;
+  color: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.btn-test:hover:not(:disabled) {
+  background: var(--accent-bg);
+}
+
+.btn-test:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.diagnose-panel {
+  margin-top: 2px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background: var(--bg-primary);
+}
+
+.diagnose-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 8px;
+}
+
+.diagnose-ok {
+  color: var(--success);
+}
+
+.diagnose-fail {
+  color: var(--danger);
+}
+
+.diagnose-grid {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 4px 12px;
+  font-size: 12px;
+}
+
+.diag-label {
+  color: var(--text-secondary);
+}
+
+.diag-value {
+  color: var(--text-primary);
+  font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+}
+
+.diagnose-error {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--danger);
+}
+
+.spinner {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--border-color);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.6s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
 }
 </style>
