@@ -45,6 +45,7 @@ declare global {
       sftpExecPwd: (sessionId: string) => Promise<string>
       sftpExecHome: (sessionId: string) => Promise<string>
       sftpDownload: (sessionId: string, remotePath: string, fileName: string, transferId: string) => void
+      sftpUpload: (sessionId: string, localPath: string, remotePath: string, fileName: string, transferId: string) => void
       sftpCancelTransfer: (transferId: string) => void
 
       shellOpenPath: (filePath: string) => Promise<string>
@@ -109,8 +110,10 @@ export interface TransferItem {
   id: string
   fileName: string
   localPath: string
+  remotePath?: string
   transferred: number
   total: number
-  status: 'downloading' | 'completed' | 'error'
+  status: 'downloading' | 'uploading' | 'completed' | 'error'
+  direction: 'download' | 'upload'
   error?: string
 }

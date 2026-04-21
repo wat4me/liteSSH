@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { Star, Edit, Delete, Plus } from '@element-plus/icons-vue'
-import type { Group } from '../env.d.ts'
+import type { Connection, Group } from '../env.d.ts'
 
 const UNGROUPED_ID = '__ungrouped__'
 
@@ -9,6 +9,7 @@ const props = defineProps<{
   groups: Group[]
   activeGroupId: string | null
   connectionCounts: Record<string, number>
+  connections: Connection[]
 }>()
 
 const emit = defineEmits<{
@@ -18,12 +19,20 @@ const emit = defineEmits<{
   (e: 'delete', groupId: string): void
   (e: 'setDefault', groupId: string): void
   (e: 'reorder', orderedIds: string[]): void
+  (e: 'connect', connectionId: string): void
 }>()
 
 const editingId = ref<string | null>(null)
 const editingName = ref('')
 const dragIndex = ref<number | null>(null)
 const dropIndex = ref<number | null>(null)
+
+function getConnectionsForGroup(groupId: string): Connection[] {
+  if (groupId === UNGROUPED_ID) {
+    return props.connections.filter((c) => !c.group)
+  }
+  return props.connections.filter((c) => c.group === groupId)
+}
 
 function startRename(group: Group) {
   editingId.value = group.id
@@ -76,63 +85,74 @@ function onDragEnd() {
   <div class="group-panel">
     <div class="group-panel-title">分组</div>
     <div class="group-list">
-      <div
-        v-for="(group, index) in groups"
-        :key="group.id"
-        class="group-item"
-        :class="{
-          active: group.id === activeGroupId,
-          dragging: dragIndex === index,
-          'drop-above': dropIndex === index && dragIndex !== null && dragIndex < index,
-          'drop-below': dropIndex === index && dragIndex !== null && dragIndex > index,
-        }"
-        draggable="true"
-        @click="emit('select', group.id)"
-        @dragstart="onDragStart(index)"
-        @dragover="onDragOver($event, index)"
-        @dragleave="onDragLeave"
-        @drop="onDrop($event, index)"
-        @dragend="onDragEnd"
-      >
-        <div v-if="dropIndex === index && dragIndex !== null && dragIndex < index" class="drop-indicator top"></div>
-        <div class="group-item-content">
-          <span v-if="group.isDefault" class="default-star" title="默认分组">
-            <el-icon :size="12"><Star /></el-icon>
-          </span>
-          <template v-if="editingId === group.id">
-            <input
-              v-model="editingName"
-              class="rename-input"
-              @keyup.enter="finishRename(group)"
-              @keyup.escape="cancelRename"
-              @blur="finishRename(group)"
-              @click.stop
-            />
-          </template>
-          <template v-else>
-            <span class="group-name">{{ group.name }}</span>
-            <span class="group-count" v-if="connectionCounts[group.id]">{{ connectionCounts[group.id] }}</span>
-          </template>
-        </div>
-        <div v-if="editingId !== group.id" class="group-actions">
-          <el-tooltip content="重命名" placement="right">
-            <button class="icon-btn-tiny" @click.stop="startRename(group)">
-              <el-icon :size="12"><Edit /></el-icon>
-            </button>
-          </el-tooltip>
-          <el-tooltip v-if="!group.isDefault" content="设为默认" placement="right">
-            <button class="icon-btn-tiny" @click.stop="emit('setDefault', group.id)">
+      <template v-for="(group, index) in groups" :key="group.id">
+        <div
+          class="group-item"
+          :class="{
+            active: group.id === activeGroupId,
+            dragging: dragIndex === index,
+            'drop-above': dropIndex === index && dragIndex !== null && dragIndex < index,
+            'drop-below': dropIndex === index && dragIndex !== null && dragIndex > index,
+          }"
+          draggable="true"
+          @click="emit('select', group.id)"
+          @dragstart="onDragStart(index)"
+          @dragover="onDragOver($event, index)"
+          @dragleave="onDragLeave"
+          @drop="onDrop($event, index)"
+          @dragend="onDragEnd"
+        >
+          <div v-if="dropIndex === index && dragIndex !== null && dragIndex < index" class="drop-indicator top"></div>
+          <div class="group-item-content">
+            <span v-if="group.isDefault" class="default-star" title="默认分组">
               <el-icon :size="12"><Star /></el-icon>
-            </button>
-          </el-tooltip>
-          <el-tooltip content="删除" placement="right">
-            <button class="icon-btn-tiny danger" @click.stop="emit('delete', group.id)">
-              <el-icon :size="12"><Delete /></el-icon>
-            </button>
-          </el-tooltip>
+            </span>
+            <template v-if="editingId === group.id">
+              <input
+                v-model="editingName"
+                class="rename-input"
+                @keyup.enter="finishRename(group)"
+                @keyup.escape="cancelRename"
+                @blur="finishRename(group)"
+                @click.stop
+              />
+            </template>
+            <template v-else>
+              <span class="group-name">{{ group.name }}</span>
+              <span class="group-count" v-if="connectionCounts[group.id]">{{ connectionCounts[group.id] }}</span>
+            </template>
+          </div>
+          <div v-if="editingId !== group.id" class="group-actions">
+            <el-tooltip content="重命名" placement="right">
+              <button class="icon-btn-tiny" @click.stop="startRename(group)">
+                <el-icon :size="12"><Edit /></el-icon>
+              </button>
+            </el-tooltip>
+            <el-tooltip v-if="!group.isDefault" content="设为默认" placement="right">
+              <button class="icon-btn-tiny" @click.stop="emit('setDefault', group.id)">
+                <el-icon :size="12"><Star /></el-icon>
+              </button>
+            </el-tooltip>
+            <el-tooltip content="删除" placement="right">
+              <button class="icon-btn-tiny danger" @click.stop="emit('delete', group.id)">
+                <el-icon :size="12"><Delete /></el-icon>
+              </button>
+            </el-tooltip>
+          </div>
+          <div v-if="dropIndex === index && dragIndex !== null && dragIndex > index" class="drop-indicator bottom"></div>
         </div>
-        <div v-if="dropIndex === index && dragIndex !== null && dragIndex > index" class="drop-indicator bottom"></div>
-      </div>
+        <div v-if="group.id === activeGroupId" class="group-connections">
+          <div
+            v-for="conn in getConnectionsForGroup(group.id)"
+            :key="conn.id"
+            class="sidebar-conn"
+            @dblclick="emit('connect', conn.id)"
+          >
+            <span class="sidebar-conn-dot"></span>
+            <span class="sidebar-conn-name" :title="conn.name">{{ conn.name }}</span>
+          </div>
+        </div>
+      </template>
 
       <div
         class="group-item ungrouped"
@@ -142,6 +162,17 @@ function onDragEnd() {
         <div class="group-item-content">
           <span class="group-name">未分组</span>
           <span class="group-count" v-if="connectionCounts[UNGROUPED_ID]">{{ connectionCounts[UNGROUPED_ID] }}</span>
+        </div>
+      </div>
+      <div v-if="UNGROUPED_ID === activeGroupId" class="group-connections">
+        <div
+          v-for="conn in getConnectionsForGroup(UNGROUPED_ID)"
+          :key="conn.id"
+          class="sidebar-conn"
+          @dblclick="emit('connect', conn.id)"
+        >
+          <span class="sidebar-conn-dot"></span>
+          <span class="sidebar-conn-name" :title="conn.name">{{ conn.name }}</span>
         </div>
       </div>
     </div>
@@ -331,5 +362,44 @@ function onDragEnd() {
 .add-group-btn:hover {
   background: var(--accent-bg);
   border-color: var(--accent);
+}
+
+.group-connections {
+  padding: 0 4px 2px 4px;
+}
+
+.sidebar-conn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px 5px 24px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.sidebar-conn:hover {
+  background: var(--bg-tertiary);
+}
+
+.sidebar-conn-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--success);
+  flex-shrink: 0;
+  opacity: 0.6;
+}
+
+.sidebar-conn-name {
+  font-size: 12px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sidebar-conn:hover .sidebar-conn-name {
+  color: var(--text-primary);
 }
 </style>

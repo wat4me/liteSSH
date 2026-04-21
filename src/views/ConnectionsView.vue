@@ -247,12 +247,14 @@ defineExpose({ loadData })
       :groups="groups"
       :active-group-id="activeGroupId"
       :connection-counts="connectionCounts"
+      :connections="connections"
       @select="onSelectGroup"
       @add="onAddGroup"
       @rename="onRenameGroup"
       @delete="onDeleteGroup"
       @set-default="onSetDefault"
       @reorder="onReorderGroups"
+      @connect="onConnectFromRow"
     />
 
     <div class="connections-main">

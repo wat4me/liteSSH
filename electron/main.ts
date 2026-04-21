@@ -454,6 +454,21 @@ ipcMain.on('sftp:cancelTransfer', (_event, transferId: string) => {
   sshManager.cancelTransfer(transferId)
 })
 
+ipcMain.on('sftp:upload', (_event, sessionId: string, localPath: string, remotePath: string, fileName: string, transferId: string) => {
+  mainWindow?.webContents.send('sftp:transferStart', transferId, fileName, localPath)
+
+  sshManager
+    .sftpUpload(sessionId, localPath, remotePath, transferId, (transferred, total) => {
+      mainWindow?.webContents.send('sftp:transferProgress', transferId, transferred, total)
+    })
+    .then(() => {
+      mainWindow?.webContents.send('sftp:transferComplete', transferId, localPath)
+    })
+    .catch((err) => {
+      mainWindow?.webContents.send('sftp:transferError', transferId, err.message)
+    })
+})
+
 ipcMain.handle('shell:openPath', async (_event, filePath: string) => {
   return await shell.openPath(filePath)
 })

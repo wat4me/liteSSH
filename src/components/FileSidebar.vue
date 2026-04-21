@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, reactive, onMounted, onBeforeUnmount, watch } from 'vue'
+import { ref, reactive, computed, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
 import type { FileEntry, TransferItem } from '../env.d.ts'
 
 const props = defineProps<{
@@ -11,7 +11,7 @@ const emit = defineEmits<{
   (e: 'close'): void
 }>()
 
-type TabType = 'files' | 'downloads'
+type TabType = 'files' | 'downloads' | 'uploads'
 
 const activeTab = ref<TabType>('files')
 const contextMenuVisible = ref(false)
@@ -34,6 +34,22 @@ const followTerminalPath = ref(true)
 const previousTerminalPath = ref('')
 
 const transfers = reactive<Map<string, TransferItem>>(new Map())
+
+const downloadTransfers = computed(() => {
+  const items: [string, TransferItem][] = []
+  for (const [id, item] of transfers) {
+    if (item.direction === 'download') items.push([id, item])
+  }
+  return items
+})
+
+const uploadTransfers = computed(() => {
+  const items: [string, TransferItem][] = []
+  for (const [id, item] of transfers) {
+    if (item.direction === 'upload') items.push([id, item])
+  }
+  return items
+})
 
 let unsubClosed: (() => void) | null = null
 let unsubStart: (() => void) | null = null
@@ -142,6 +158,73 @@ function startDownload(entry: FileEntry) {
   const transferId = `dl-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`
   window.liteSSH.sftpDownload(props.sessionId, entry.path, entry.name, transferId)
   activeTab.value = 'downloads'
+}
+
+const showUploadConfirm = ref(false)
+const uploadFiles = ref<{ name: string; path: string }[]>([])
+const uploadTargetPath = ref('')
+const isDragOver = ref(false)
+
+function onDragOver(e: DragEvent) {
+  e.preventDefault()
+  e.stopPropagation()
+  if (e.dataTransfer?.files?.length) {
+    isDragOver.value = true
+  }
+}
+
+function onDragLeave(e: DragEvent) {
+  e.preventDefault()
+  e.stopPropagation()
+  isDragOver.value = false
+}
+
+function onDrop(e: DragEvent) {
+  e.preventDefault()
+  e.stopPropagation()
+  isDragOver.value = false
+  if (!e.dataTransfer?.files?.length) return
+  if (!currentPath.value) return
+
+  const fileList = Array.from(e.dataTransfer.files)
+  const filtered = fileList.filter(f => f.type || f.size > 0)
+  if (filtered.length === 0) return
+
+  uploadFiles.value = filtered.map(f => ({ name: f.name, path: (f as any).path || f.name }))
+  uploadTargetPath.value = currentPath.value
+  showUploadConfirm.value = true
+}
+
+function cancelUpload() {
+  showUploadConfirm.value = false
+  uploadFiles.value = []
+}
+
+async function confirmUpload() {
+  showUploadConfirm.value = false
+  const files = uploadFiles.value
+  const target = uploadTargetPath.value
+  uploadFiles.value = []
+
+  for (const file of files) {
+    const transferId = `ul-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`
+    const remotePath = target === '/' ? `/${file.name}` : `${target}/${file.name}`
+    transfers.set(transferId, {
+      id: transferId,
+      fileName: file.name,
+      localPath: file.path,
+      remotePath,
+      transferred: 0,
+      total: 0,
+      status: 'uploading',
+      direction: 'upload',
+    })
+    window.liteSSH.sftpUpload(props.sessionId, file.path, remotePath, file.name, transferId)
+  }
+  activeTab.value = 'uploads'
+
+  await nextTick()
+  await loadDirectory(target)
 }
 
 function normalizePosixPath(basePath: string, inputPath: string): string {
@@ -309,7 +392,8 @@ function mapShellPathToSftpPath(path: string): string {
 }
 
 async function resolveCdPath(command: string): Promise<string | null> {
-  const match = command.match(/(?:^|[;&|]\s*)cd(?:\s+(.+?))?(?=\s*(?:[;&|]|$))/)
+  const cleanCommand = command.replace(/\[Pasted[^\]]*\]/g, '').trim()
+  const match = cleanCommand.match(/(?:^|[;&|]\s*)cd(?:\s+(.+?))?(?=\s*(?:[;&|]|$))/)
   if (!match) return null
   const rawArg = (match[1] || '').trim()
   if (!rawArg) {
@@ -414,17 +498,25 @@ async function resolveCdPath(command: string): Promise<string | null> {
       `candidate=${candidate}`,
       `realpathError=${err?.message || 'unknown'}`,
     ].join('\n')
-    return candidate
+    return null
   }
 }
 
 async function handleTerminalCd(command: string) {
   const resolved = await resolveCdPath(command)
   if (resolved) {
-    previousTerminalPath.value = terminalPath.value
-    terminalPath.value = resolved
     if (followTerminalPath.value) {
-      await loadDirectory(resolved)
+      const prevPath = currentPath.value
+      try {
+        await loadDirectory(resolved)
+        previousTerminalPath.value = terminalPath.value
+        terminalPath.value = resolved
+      } catch {
+        terminalPath.value = prevPath
+      }
+    } else {
+      previousTerminalPath.value = terminalPath.value
+      terminalPath.value = resolved
     }
   }
 }
@@ -486,14 +578,7 @@ function clearFinishedTransfers() {
   }
 }
 
-function clearAllTransfers() {
-  for (const [id, item] of transfers) {
-    if (item.status === 'downloading') {
-      window.liteSSH.sftpCancelTransfer(id)
-    }
-  }
-  transfers.clear()
-}
+
 
 function openInFolder(localPath: string) {
   window.liteSSH.shellShowItemInFolder(localPath)
@@ -522,6 +607,7 @@ onMounted(async () => {
   })
 
   unsubStart = window.liteSSH.onTransferStart((transferId, fileName, localPath) => {
+    if (transfers.has(transferId)) return
     transfers.set(transferId, {
       id: transferId,
       fileName,
@@ -529,6 +615,7 @@ onMounted(async () => {
       transferred: 0,
       total: 0,
       status: 'downloading',
+      direction: 'download',
     })
   })
 
@@ -573,7 +660,15 @@ defineExpose({ handleTerminalCd })
 </script>
 
 <template>
-  <div class="file-sidebar" @click="hideContextMenu">
+  <div class="file-sidebar" @click="hideContextMenu" @dragover="onDragOver" @dragleave="onDragLeave" @drop="onDrop">
+    <div v-if="isDragOver && currentPath" class="drag-overlay">
+      <div class="drag-overlay-content">
+        <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
+        </svg>
+        <span>上传到 {{ currentPath }}</span>
+      </div>
+    </div>
     <div class="sidebar-tabs">
       <button
         class="sidebar-tab"
@@ -594,7 +689,18 @@ defineExpose({ handleTerminalCd })
           <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
         </svg>
         <span>下载</span>
-        <span v-if="transfers.size > 0" class="sidebar-tab-badge">{{ transfers.size }}</span>
+        <span v-if="downloadTransfers.length > 0" class="sidebar-tab-badge">{{ downloadTransfers.length }}</span>
+      </button>
+      <button
+        class="sidebar-tab"
+        :class="{ active: activeTab === 'uploads' }"
+        @click="activeTab = 'uploads'"
+      >
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
+        </svg>
+        <span>上传</span>
+        <span v-if="uploadTransfers.length > 0" class="sidebar-tab-badge">{{ uploadTransfers.length }}</span>
       </button>
       <div style="flex:1"></div>
       <button class="sidebar-btn sidebar-btn-close" @click="emit('close')" title="关闭侧栏">
@@ -717,28 +823,27 @@ defineExpose({ handleTerminalCd })
       </div>
     </div>
 
-    <div v-else class="sidebar-content">
+    <div v-else-if="activeTab === 'downloads'" class="sidebar-content">
       <div class="downloads-toolbar">
-        <button class="downloads-btn" @click="clearFinishedTransfers">清理完成</button>
-        <button class="downloads-btn downloads-btn-danger" @click="clearAllTransfers">清空</button>
+        <button class="downloads-btn" @click="clearFinishedTransfers">清理记录</button>
       </div>
-      <div v-if="transfers.size === 0" class="sidebar-empty" style="margin-top:40px">
+      <div v-if="downloadTransfers.length === 0" class="sidebar-empty" style="margin-top:40px">
         暂无下载记录
       </div>
       <div class="transfer-list">
         <div
-          v-for="[id, item] in transfers"
+          v-for="[id, item] in downloadTransfers"
           :key="id"
           class="transfer-item"
           :class="{ 'transfer-completed': item.status === 'completed', 'transfer-error': item.status === 'error' }"
           @click="item.status === 'completed' ? openInFolder(item.localPath) : undefined"
         >
           <div class="transfer-info">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="transfer-file-icon" v-if="item.status !== 'completed'">
-              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/>
-            </svg>
-            <svg v-else width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="transfer-done-icon">
+            <svg v-if="item.status === 'completed'" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="transfer-done-icon">
               <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/>
+            </svg>
+            <svg v-else width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="transfer-file-icon">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
             </svg>
             <div class="transfer-text">
               <span class="transfer-name" :title="item.localPath">{{ item.fileName }}</span>
@@ -783,6 +888,73 @@ defineExpose({ handleTerminalCd })
       </div>
     </div>
 
+    <div v-else-if="activeTab === 'uploads'" class="sidebar-content">
+      <div class="downloads-toolbar">
+        <button class="downloads-btn" @click="clearFinishedTransfers">清理记录</button>
+      </div>
+      <div v-if="uploadTransfers.length === 0" class="sidebar-empty" style="margin-top:40px">
+        暂无上传记录
+      </div>
+      <div class="transfer-list">
+        <div
+          v-for="[id, item] in uploadTransfers"
+          :key="id"
+          class="transfer-item"
+          :class="{ 'transfer-completed': item.status === 'completed', 'transfer-error': item.status === 'error' }"
+        >
+          <div class="transfer-info">
+            <svg v-if="item.status === 'completed'" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="transfer-done-icon">
+              <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/>
+            </svg>
+            <svg v-else-if="item.status === 'uploading'" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="transfer-direction-icon">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
+            </svg>
+            <svg v-else width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="transfer-file-icon">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
+            </svg>
+            <div class="transfer-text">
+              <span class="transfer-name" :title="item.localPath">{{ item.fileName }}</span>
+              <span v-if="item.status === 'uploading'" class="transfer-detail">
+                {{ formatSize(item.transferred) }} / {{ formatSize(item.total) }}
+              </span>
+              <span v-else-if="item.status === 'completed'" class="transfer-detail transfer-detail-ok">
+                上传完成
+              </span>
+              <span v-else class="transfer-detail transfer-detail-err">
+                {{ item.error || '错误' }}
+              </span>
+            </div>
+          </div>
+          <div v-if="item.status === 'uploading'" class="transfer-progress-bar">
+            <div
+              class="transfer-progress-fill"
+              :style="{ width: (item.total ? Math.min(100, Math.round(item.transferred / item.total * 100)) : 0) + '%' }"
+            ></div>
+          </div>
+          <button
+            v-if="item.status === 'uploading'"
+            class="transfer-action"
+            @click.stop="cancelTransfer(id)"
+            title="取消"
+          >
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3">
+              <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+            </svg>
+          </button>
+          <button
+            v-if="item.status === 'error'"
+            class="transfer-action"
+            @click.stop="removeTransfer(id)"
+            title="移除"
+          >
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3">
+              <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+            </svg>
+          </button>
+        </div>
+      </div>
+    </div>
+
     <div v-if="contextMenuVisible && contextMenuEntry && !contextMenuEntry.isDirectory" class="context-menu" :style="{ left: contextMenuX + 'px', top: contextMenuY + 'px' }" @click.stop>
       <button class="context-menu-item" @click="onContextMenuDownload">
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -790,6 +962,21 @@ defineExpose({ handleTerminalCd })
         </svg>
         <span>下载文件</span>
       </button>
+    </div>
+
+    <div v-if="showUploadConfirm" class="modal-overlay" @click.self="cancelUpload">
+      <div class="modal-card">
+        <h3 class="modal-title">确认上传</h3>
+        <p class="upload-confirm-text">将以下文件上传到：</p>
+        <div class="upload-confirm-path">{{ uploadTargetPath }}</div>
+        <ul class="upload-file-list">
+          <li v-for="file in uploadFiles" :key="file.path">{{ file.name }}</li>
+        </ul>
+        <div class="upload-confirm-actions">
+          <button class="btn-cancel" @click="cancelUpload">取消</button>
+          <button class="btn-upload" @click="confirmUpload">上传</button>
+        </div>
+      </div>
     </div>
   </div>
 </template>
@@ -1293,5 +1480,141 @@ defineExpose({ handleTerminalCd })
 .context-menu-item:hover {
   background: var(--accent-bg);
   color: var(--accent);
+}
+
+.drag-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.drag-overlay-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  color: var(--accent);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.modal-card {
+  width: 420px;
+  max-height: 80vh;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+}
+
+.modal-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 16px;
+}
+
+.upload-confirm-text {
+  font-size: 13px;
+  color: var(--text-secondary);
+  margin-bottom: 8px;
+}
+
+.upload-confirm-path {
+  font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+  font-size: 13px;
+  color: var(--accent);
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  padding: 8px 12px;
+  margin-bottom: 12px;
+  word-break: break-all;
+}
+
+.upload-file-list {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 16px 0;
+  max-height: 200px;
+  overflow-y: auto;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+}
+
+.upload-file-list li {
+  padding: 6px 12px;
+  font-size: 12px;
+  color: var(--text-primary);
+  border-bottom: 1px solid var(--border-color);
+}
+
+.upload-file-list li:last-child {
+  border-bottom: none;
+}
+
+.upload-confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+}
+
+.btn-cancel {
+  padding: 8px 20px;
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  border: none;
+  border-radius: 6px;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.btn-cancel:hover {
+  background: var(--border-color);
+}
+
+.btn-upload {
+  padding: 8px 20px;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.btn-upload:hover {
+  background: var(--accent-hover);
+}
+
+.transfer-direction-icon {
+  flex-shrink: 0;
+  color: var(--accent);
+  margin-top: 1px;
 }
 </style>

@@ -91,11 +91,15 @@ function getVisibleCommandLine(): string {
   }
 }
 
+function stripShellNotifications(line: string): string {
+  return line.replace(/\[Pasted[^\]]*\]\s*/g, '')
+}
+
 function inferSubmittedCommand(command: string): string {
   const trimmedCommand = command.trim()
   if (!trimmedCommand) return trimmedCommand
-  const visibleLine = getVisibleCommandLine()
-  if (!visibleLine) return trimmedCommand
+  const visibleLine = stripShellNotifications(getVisibleCommandLine())
+  if (!visibleLine.trim()) return trimmedCommand
   const commandStart = visibleLine.lastIndexOf(trimmedCommand)
   if (commandStart !== -1) {
     return visibleLine.slice(commandStart).trim()
@@ -183,8 +187,7 @@ onMounted(async () => {
       event.preventDefault()
       window.liteSSH.clipboardReadText().then((text: string) => {
         if (text && terminal) {
-          const processed = text.replace(/\r\n|\n/g, '\r')
-          window.liteSSH.sshWrite(props.sessionId, processed)
+          terminal.paste(text)
         }
       }).catch(() => {})
       return false

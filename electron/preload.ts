@@ -32,6 +32,8 @@ contextBridge.exposeInMainWorld('liteSSH', {
   sftpExecHome: (sessionId: string) => ipcRenderer.invoke('sftp:execHome', sessionId),
   sftpDownload: (sessionId: string, remotePath: string, fileName: string, transferId: string) =>
     ipcRenderer.send('sftp:download', sessionId, remotePath, fileName, transferId),
+  sftpUpload: (sessionId: string, localPath: string, remotePath: string, fileName: string, transferId: string) =>
+    ipcRenderer.send('sftp:upload', sessionId, localPath, remotePath, fileName, transferId),
   sftpCancelTransfer: (transferId: string) => ipcRenderer.send('sftp:cancelTransfer', transferId),
 
   shellOpenPath: (filePath: string) => ipcRenderer.invoke('shell:openPath', filePath),

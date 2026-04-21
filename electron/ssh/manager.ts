@@ -48,7 +48,7 @@ export interface StatsInfo {
 
 interface ActiveTransfer {
   readStream: import('stream').Readable
-  writeStream: import('fs').WriteStream
+  writeStream?: import('stream').Writable
   cancelled: boolean
 }
 
@@ -364,12 +364,76 @@ export class SSHManager {
     })
   }
 
+  sftpUpload(
+    sessionId: string,
+    localPath: string,
+    remotePath: string,
+    transferId: string,
+    onProgress: (transferred: number, total: number) => void
+  ): Promise<void> {
+    const session = this.sessions.get(sessionId)
+    if (!session?.sftp) return Promise.reject(new Error('SFTP not initialized'))
+
+    return new Promise((resolve, reject) => {
+      let totalSize: number
+      try {
+        totalSize = fs.statSync(localPath).size
+      } catch (err: any) {
+        reject(new Error(`Cannot read local file: ${err.message}`))
+        return
+      }
+
+      const readStream = fs.createReadStream(localPath)
+      const writeStream = session.sftp!.createWriteStream(remotePath)
+
+      const transfer: ActiveTransfer = {
+        readStream,
+        cancelled: false,
+      }
+      this.activeTransfers.set(transferId, transfer)
+
+      let transferred = 0
+
+      readStream.on('data', (chunk: string | Buffer) => {
+        transferred += chunk.length
+        onProgress(transferred, totalSize)
+      })
+
+      readStream.on('error', (err: any) => {
+        this.activeTransfers.delete(transferId)
+        writeStream.destroy()
+        if (!transfer.cancelled) {
+          reject(new Error(`Upload read error: ${err.message}`))
+        }
+      })
+
+      writeStream.on('error', (err: any) => {
+        this.activeTransfers.delete(transferId)
+        readStream.destroy()
+        if (!transfer.cancelled) {
+          reject(new Error(`Upload write error: ${err.message}`))
+        }
+      })
+
+      writeStream.on('close', () => {
+        this.activeTransfers.delete(transferId)
+        if (transfer.cancelled) {
+          reject(new Error('Transfer cancelled'))
+        } else {
+          resolve()
+        }
+      })
+
+      readStream.pipe(writeStream)
+    })
+  }
+
   cancelTransfer(transferId: string) {
     const transfer = this.activeTransfers.get(transferId)
     if (transfer) {
       transfer.cancelled = true
       transfer.readStream.destroy()
-      transfer.writeStream.destroy()
+      transfer.writeStream?.destroy()
       this.activeTransfers.delete(transferId)
     }
   }
