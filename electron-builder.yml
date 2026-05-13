@@ -1,0 +1,20 @@
+appId: com.litessh.app
+productName: liteSSH
+directories:
+  buildResources: build
+files:
+  - dist/**/*
+  - dist-electron/**/*
+  - "!node_modules/**/*"
+  - node_modules/ssh2/**/*
+  - node_modules/asn1/**/*
+  - node_modules/bcrypt-pbkdf/**/*
+  - node_modules/safer-buffer/**/*
+  - node_modules/tweetnacl/**/*
+asarUnpack:
+  - node_modules/ssh2/**/*
+win:
+  target:
+    - portable
+  icon: build/liteSSH.ico
+  signAndEditExecutable: true

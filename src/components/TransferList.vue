@@ -1,0 +1,202 @@
+<script setup lang="ts">
+import type { TransferItem } from '../env.d.ts'
+import { formatSize } from '../utils/format'
+
+defineProps<{
+  transfers: [string, TransferItem][]
+  direction: 'download' | 'upload'
+  emptyText: string
+}>()
+
+const emit = defineEmits<{
+  (e: 'cancel', id: string): void
+  (e: 'remove', id: string): void
+  (e: 'openFolder', localPath: string): void
+}>()
+</script>
+
+<template>
+  <div v-if="transfers.length === 0" class="sidebar-empty" style="margin-top:40px">
+    {{ emptyText }}
+  </div>
+  <div class="transfer-list">
+    <div
+      v-for="[id, item] in transfers"
+      :key="id"
+      class="transfer-item"
+      :class="{ 'transfer-completed': item.status === 'completed', 'transfer-error': item.status === 'error' }"
+      @click="item.status === 'completed' && direction === 'download' ? emit('openFolder', item.localPath) : undefined"
+    >
+      <div class="transfer-info">
+        <svg v-if="item.status === 'completed'" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="transfer-done-icon">
+          <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/>
+        </svg>
+        <svg v-else-if="item.status === 'uploading'" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="transfer-direction-icon">
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
+        </svg>
+        <svg v-else width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="transfer-file-icon">
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
+        </svg>
+        <div class="transfer-text">
+          <span class="transfer-name" :title="item.localPath">{{ item.fileName }}</span>
+          <span v-if="item.status === 'downloading' || item.status === 'uploading'" class="transfer-detail">
+            {{ formatSize(item.transferred) }} / {{ formatSize(item.total) }}
+          </span>
+          <span v-else-if="item.status === 'completed'" class="transfer-detail transfer-detail-ok">
+            {{ direction === 'download' ? '已完成 · 点击打开所在文件夹' : '上传完成' }}
+          </span>
+          <span v-else class="transfer-detail transfer-detail-err">
+            {{ item.error || '错误' }}
+          </span>
+        </div>
+      </div>
+      <div v-if="item.status === 'downloading' || item.status === 'uploading'" class="transfer-progress-bar">
+        <div
+          class="transfer-progress-fill"
+          :style="{ width: (item.total ? Math.min(100, Math.round(item.transferred / item.total * 100)) : 0) + '%' }"
+        ></div>
+      </div>
+      <button
+        v-if="item.status === 'downloading' || item.status === 'uploading'"
+        class="transfer-action"
+        @click.stop="emit('cancel', id)"
+        title="取消"
+      >
+        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3">
+          <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+        </svg>
+      </button>
+      <button
+        v-if="item.status === 'error'"
+        class="transfer-action"
+        @click.stop="emit('remove', id)"
+        title="移除"
+      >
+        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3">
+          <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+        </svg>
+      </button>
+    </div>
+  </div>
+</template>
+
+<style scoped>
+.sidebar-empty {
+  padding: 20px;
+  text-align: center;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.transfer-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 4px 0;
+}
+
+.transfer-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  transition: background 0.15s;
+}
+
+.transfer-item:hover {
+  background: var(--hover-bg);
+}
+
+.transfer-completed {
+  cursor: pointer;
+}
+
+.transfer-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.transfer-file-icon {
+  flex-shrink: 0;
+  color: var(--text-secondary);
+  margin-top: 1px;
+}
+
+.transfer-direction-icon {
+  flex-shrink: 0;
+  color: var(--accent);
+  margin-top: 1px;
+}
+
+.transfer-done-icon {
+  flex-shrink: 0;
+  color: var(--success);
+  margin-top: 1px;
+}
+
+.transfer-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.transfer-name {
+  font-size: 11px;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.transfer-detail {
+  font-size: 10px;
+  color: var(--text-secondary);
+}
+
+.transfer-detail-ok {
+  color: var(--success);
+}
+
+.transfer-detail-err {
+  color: var(--danger);
+}
+
+.transfer-progress-bar {
+  width: 60px;
+  height: 3px;
+  background: var(--bg-tertiary);
+  border-radius: 2px;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.transfer-progress-fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 2px;
+  transition: width 0.3s;
+}
+
+.transfer-action {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border: none;
+  background: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  border-radius: 3px;
+  flex-shrink: 0;
+  transition: all 0.15s;
+}
+
+.transfer-action:hover {
+  color: var(--danger);
+  background: rgba(248, 81, 73, 0.15);
+}
+</style>

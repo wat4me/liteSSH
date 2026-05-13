@@ -1,0 +1,186 @@
+export {}
+
+declare global {
+  interface Window {
+    liteSSH: {
+      getConnections: () => Promise<Connection[]>
+      saveConnection: (conn: Partial<Connection> & { name: string; host: string; username: string; password: string }) => Promise<Connection>
+      deleteConnection: (id: string) => Promise<boolean>
+      updateConnectionGroup: (id: string, groupId: string | undefined) => Promise<boolean>
+      isEncryptionAvailable: () => Promise<boolean>
+      getConnectionPassword: (id: string) => Promise<string>
+
+      getGroups: () => Promise<Group[]>
+      saveGroup: (group: Partial<Group> & { name: string }) => Promise<Group>
+      deleteGroup: (id: string) => Promise<boolean>
+      reorderGroups: (ids: string[]) => Promise<void>
+      setDefaultGroup: (id: string) => Promise<void>
+
+      getDownloadPath: () => Promise<string>
+      setDownloadPath: (dirPath: string) => Promise<void>
+      getRecentConnections: () => Promise<Connection[]>
+      recordRecentConnection: (connectionId: string) => Promise<void>
+      selectDirectory: () => Promise<string | null>
+
+      getTerminalFontSize: () => Promise<number>
+      setTerminalFontSize: (size: number) => Promise<void>
+      getRecentDownloadPaths: () => Promise<string[]>
+      addRecentDownloadPath: (dirPath: string) => Promise<void>
+
+      getLatencyEnabled: () => Promise<boolean>
+      setLatencyEnabled: (enabled: boolean) => Promise<void>
+      getLatencyIntervalMs: () => Promise<number>
+      setLatencyIntervalMs: (intervalMs: number) => Promise<void>
+
+      exportConnections: () => Promise<boolean>
+      importConnections: () => Promise<{ imported: number; total: number } | null>
+
+      sshConnect: (connectionId: string) => Promise<string>
+      sshDisconnect: (sessionId: string) => Promise<void>
+      sshWrite: (sessionId: string, data: string) => void
+      sshResize: (sessionId: string, cols: number, rows: number) => void
+      sshTestConnection: (connectionId: string) => Promise<{ ok: boolean; latency?: number; error?: string }>
+      sshTestConnectionParams: (params: { host: string; port: number; username: string; password: string }) => Promise<{ ok: boolean; latency?: number; error?: string }>
+      sshDiagnoseConnectionParams: (params: {
+        host: string
+        port: number
+        username: string
+        password: string
+      }) => Promise<{
+        ok: boolean
+        tcpLatency?: number
+        sshReadyLatency?: number
+        shellOpenLatency?: number
+        shellFirstByteLatency?: number
+        totalLatency?: number
+        error?: string
+      }>
+
+      sshStartLatencyMonitor: (sessionId: string) => Promise<void>
+      sshStopLatencyMonitor: (sessionId: string) => Promise<void>
+
+      getMonitorEnabled: () => Promise<boolean>
+      setMonitorEnabled: (enabled: boolean) => Promise<void>
+      getMonitorIntervalMs: () => Promise<number>
+      setMonitorIntervalMs: (intervalMs: number) => Promise<void>
+      monitorStart: (sessionId: string) => Promise<void>
+      monitorStop: (sessionId: string) => Promise<void>
+
+      sftpInit: (sessionId: string) => Promise<void>
+      sftpReaddir: (sessionId: string, remotePath: string) => Promise<FileEntry[]>
+      sftpRealpath: (sessionId: string, remotePath: string) => Promise<string>
+      sftpExecPwd: (sessionId: string) => Promise<string>
+      sftpExecHome: (sessionId: string) => Promise<string>
+      sftpDownload: (sessionId: string, remotePath: string, fileName: string, transferId: string) => void
+      sftpUpload: (sessionId: string, localPath: string, remotePath: string, fileName: string, transferId: string) => void
+      sftpCancelTransfer: (transferId: string) => void
+
+      getPathForFile: (file: File) => string
+
+      readPrivateKeyFile: () => Promise<string | null>
+
+      shellOpenPath: (filePath: string) => Promise<string>
+      shellShowItemInFolder: (filePath: string) => void
+
+      clipboardReadText: () => Promise<string>
+      clipboardWriteText: (text: string) => Promise<void>
+
+      onSshData: (sessionId: string, callback: (data: string) => void) => () => void
+      onSshClosed: (sessionId: string, callback: () => void) => () => void
+      onSshError: (sessionId: string, callback: (error: string) => void) => () => void
+      onSshLatency: (sessionId: string, callback: (latencyMs: number) => void) => () => void
+
+      onMonitorData: (sessionId: string, callback: (data: MonitorData) => void) => () => void
+
+      onTransferStart: (callback: (sessionId: string, transferId: string, fileName: string, localPath: string, direction: 'download' | 'upload') => void) => () => void
+      onTransferProgress: (callback: (sessionId: string, transferId: string, transferred: number, total: number) => void) => () => void
+      onTransferComplete: (callback: (sessionId: string, transferId: string, localPath: string) => void) => () => void
+      onTransferError: (callback: (sessionId: string, transferId: string, error: string) => void) => () => void
+
+      updateTitleBar: (theme: string, colors?: { color: string; symbolColor: string }) => void
+    }
+  }
+}
+
+export interface Connection {
+  id: string
+  name: string
+  host: string
+  port: number
+  username: string
+  password: string
+  privateKey?: string
+  group?: string
+  keepaliveInterval?: number
+  x11Forwarding?: boolean
+  x11Host?: string
+  x11Display?: number
+  createdAt: number
+  updatedAt: number
+}
+
+export interface Group {
+  id: string
+  name: string
+  order: number
+  isDefault: boolean
+}
+
+export interface FileEntry {
+  name: string
+  path: string
+  isDirectory: boolean
+  isSymlink: boolean
+  size: number
+  modifyTime: number
+  permissions: string
+}
+
+export interface TransferItem {
+  id: string
+  sessionId: string
+  fileName: string
+  localPath: string
+  remotePath?: string
+  transferred: number
+  total: number
+  status: 'downloading' | 'uploading' | 'completed' | 'error'
+  direction: 'download' | 'upload'
+  error?: string
+}
+
+export interface MonitorData {
+  hostname: string
+  kernel: string
+  arch: string
+  uptime: string
+  cpu: {
+    usage: number
+    cores: number[]
+    loadAvg: [number, number, number]
+  }
+  memory: {
+    total: number
+    used: number
+    free: number
+    buffCache: number
+    available: number
+    swapTotal: number
+    swapUsed: number
+  }
+  disk: {
+    filesystem: string
+    total: number
+    used: number
+    available: number
+    mountPoint: string
+  }[]
+  processes: {
+    pid: number
+    user: string
+    cpu: number
+    mem: number
+    command: string
+  }[]
+  timestamp: number
+}
