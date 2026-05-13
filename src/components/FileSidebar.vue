@@ -50,6 +50,7 @@ const {
   submitPathInput,
   togglePathInput,
   refresh,
+  resolvePath,
 } = useSftpNavigation(() => props.sessionId, pwdTracker)
 
 const {
@@ -251,23 +252,29 @@ function initPwdTracker() {
 
 function handleTerminalCd(command: string) {
   const match = command.match(/(?:^|[;&|]\s*)cd\s+(.+?)$/)
-  const path = match ? match[1].trim() : command.trim()
+  let path = match ? match[1].trim() : command.trim()
   if (!path || path === '~') {
     goToHome()
     return
   }
+  if (path.startsWith('~')) {
+    path = (homePath.value || '/') + path.slice(1)
+  }
   const basePath = terminalPath.value || currentPath.value || '/'
-  const absolutePath = path.startsWith('/') ? path : (basePath === '/' ? `/${path}` : `${basePath}/${path}`)
-  window.liteSSH.sftpRealpath(props.sessionId, absolutePath).then((resolved) => {
+  let absolutePath = path.startsWith('/') ? path : (basePath === '/' ? `/${path}` : `${basePath}/${path}`)
+  absolutePath = absolutePath.replace(/\/+$/, '') || '/'
+  resolvePath(absolutePath).then((resolved) => {
+    if (!resolved) {
+      pwdTracker.revertCd(props.sessionId)
+      return
+    }
     terminalPath.value = resolved
     if (followTerminalPath.value && sftpReady.value) {
       requestAnimationFrame(() => {
         loadDirectory(resolved).then(() => saveCurrentState())
       })
     }
-  }).catch(() => {
-    pwdTracker.revertCd(props.sessionId)
-  })
+})
 }
 
 watch(() => props.sessionId, async (newId, oldId) => {

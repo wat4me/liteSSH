@@ -592,39 +592,7 @@ hasSession(sessionId: string): boolean {
   }
 
   async queryPwd(sessionId: string): Promise<string> {
-    const session = this.sessions.get(sessionId)
-    if (!session) throw new Error('Session not found')
-
-    return new Promise((resolve, reject) => {
-      const marker = `${Date.now()}`
-      const startMarker = `__PWD_S_${marker}__`
-      const endMarker = `__PWD_E_${marker}__`
-
-      let buffer = ''
-      const timeout = setTimeout(() => {
-        session.stream.removeListener('data', onData)
-        reject(new Error('PWD query timeout'))
-      }, 5000)
-
-      const onData = (data: Buffer) => {
-        buffer += data.toString('utf-8')
-        const clean = buffer.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '').replace(/\x1b\][^\x07\x1b]*[\x07\x1b\\]/g, '')
-
-        const startIdx = clean.indexOf(startMarker)
-        const endIdx = clean.indexOf(endMarker)
-
-        if (startIdx !== -1 && endIdx !== -1 && endIdx > startIdx) {
-          clearTimeout(timeout)
-          session.stream.removeListener('data', onData)
-          resolve(clean.substring(startIdx + startMarker.length, endIdx).trim())
-        }
-      }
-
-      session.stream.on('data', onData)
-      // Use echo instead of printf for broader shell compatibility (fish, tcsh, etc.)
-      // $PWD is universally supported across all POSIX and most non-POSIX shells
-      session.stream.write(`stty -echo\recho "${startMarker}$PWD${endMarker}"\rstty echo\r`)
-    })
+    return this.sftpExec(sessionId, 'pwd', 5000)
   }
 
   async sftpExec(sessionId: string, command: string, timeoutMs = 10000): Promise<string> {

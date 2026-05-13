@@ -4,11 +4,13 @@ import type { MonitorData } from '../env.d'
 
 const props = defineProps<{
   sessionId: string
+  connectionId: string
   connectionName: string
 }>()
 
 const data = ref<MonitorData | null>(null)
 let unsub: (() => void) | null = null
+let monitoredSessionId: string | null = null
 
 const expandedSections = ref({
   system: true,
@@ -36,30 +38,43 @@ function barColor(percent: number): string {
   return 'var(--success)'
 }
 
-onMounted(async () => {
+async function startMonitor(sessionId: string) {
+  stopMonitor()
+  monitoredSessionId = sessionId
   try {
-    await window.liteSSH.monitorStart(props.sessionId)
+    await window.liteSSH.monitorStart(sessionId)
   } catch {}
-  unsub = window.liteSSH.onMonitorData(props.sessionId, (d: MonitorData) => {
+  unsub = window.liteSSH.onMonitorData(sessionId, (d: MonitorData) => {
     data.value = d
   })
+}
+
+function stopMonitor() {
+  unsub?.()
+  unsub = null
+  if (monitoredSessionId) {
+    window.liteSSH.monitorStop(monitoredSessionId).catch(() => {})
+    monitoredSessionId = null
+  }
+}
+
+onMounted(() => {
+  startMonitor(props.sessionId)
 })
 
 onBeforeUnmount(() => {
-  unsub?.()
-  window.liteSSH.monitorStop(props.sessionId).catch(() => {})
+  stopMonitor()
 })
 
-watch(() => props.sessionId, async (newId, oldId) => {
-  unsub?.()
-  try { await window.liteSSH.monitorStop(oldId) } catch {}
+watch(() => props.connectionId, async () => {
   data.value = null
-  try {
-    await window.liteSSH.monitorStart(newId)
-  } catch {}
-  unsub = window.liteSSH.onMonitorData(newId, (d: MonitorData) => {
-    data.value = d
-  })
+  startMonitor(props.sessionId)
+})
+
+watch(() => props.sessionId, (newId) => {
+  if (newId !== monitoredSessionId && monitoredSessionId && !data.value) {
+    startMonitor(newId)
+  }
 })
 
 function usagePercent(used: number, total: number): number {

@@ -769,7 +769,8 @@ ipcMain.handle('sftp:readdir', async (_event, sessionId: string, remotePath: str
   if (!isValidPath(remotePath)) {
     throw new Error('Invalid remote path')
   }
-  return await sshManager.sftpReaddir(sessionId, remotePath)
+  const cleanPath = remotePath.replace(/\/+$/, '') || '/'
+  return await sshManager.sftpReaddir(sessionId, cleanPath)
 })
 
 ipcMain.handle('sftp:realpath', async (_event, sessionId: string, remotePath: string) => {
@@ -779,7 +780,8 @@ ipcMain.handle('sftp:realpath', async (_event, sessionId: string, remotePath: st
   if (!isValidPath(remotePath)) {
     throw new Error('Invalid remote path')
   }
-  return await sshManager.sftpRealpath(sessionId, remotePath)
+  const cleanPath = remotePath.replace(/\/+$/, '') || '/'
+  return await sshManager.sftpRealpath(sessionId, cleanPath)
 })
 
 ipcMain.handle('sftp:execPwd', async (_event, sessionId: string) => {

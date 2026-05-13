@@ -2,6 +2,10 @@ import { ref } from 'vue'
 import type { FileEntry } from '../env.d.ts'
 import type { TerminalPwdTracker } from './useTerminalPwd'
 
+function cleanRemotePath(path: string): string {
+  return path.replace(/\/+$/, '') || '/'
+}
+
 export function useSftpNavigation(sessionId: () => string, pwdTracker?: TerminalPwdTracker) {
   const currentPath = ref('')
   const files = ref<FileEntry[]>([])
@@ -18,6 +22,23 @@ export function useSftpNavigation(sessionId: () => string, pwdTracker?: Terminal
   const previousTerminalPath = ref('')
   let pendingLoadId = 0
 
+  async function resolvePath(path: string): Promise<string | null> {
+    const clean = cleanRemotePath(path)
+    try {
+      return await window.liteSSH.sftpRealpath(sessionId(), clean)
+    } catch {
+      try {
+        const pwd = await window.liteSSH.sftpSyncPwd(sessionId())
+        if (pwd && cleanRemotePath(pwd) === clean) return clean
+      } catch {}
+      try {
+        const entries = await window.liteSSH.sftpReaddir(sessionId(), clean)
+        if (entries) return clean
+      } catch {}
+      return null
+    }
+  }
+
   async function initSftp(): Promise<boolean> {
     if (sftpReady.value) return true
     loading.value = true
@@ -25,13 +46,14 @@ export function useSftpNavigation(sessionId: () => string, pwdTracker?: Terminal
     try {
       await window.liteSSH.sftpInit(sessionId())
       sftpReady.value = true
-      const [home, shellHomeRaw] = await Promise.all([
-        window.liteSSH.sftpRealpath(sessionId(), '.'),
+      const [shellHomeRaw, sftpHome] = await Promise.all([
         window.liteSSH.sftpExecHome(sessionId()).catch(() => ''),
+        window.liteSSH.sftpRealpath(sessionId(), '.').catch(() => ''),
       ])
+      const home = shellHomeRaw.trim() || sftpHome
       if (!home) throw new Error('无法获取远程主目录')
       homePath.value = home
-      shellHomePath.value = shellHomeRaw.trim() || home
+      shellHomePath.value = shellHomeRaw.trim()
       terminalPath.value = home
       currentPath.value = home
       pathInput.value = home
@@ -46,16 +68,17 @@ export function useSftpNavigation(sessionId: () => string, pwdTracker?: Terminal
   }
 
   async function loadDirectory(path: string, isFallback = false): Promise<boolean> {
+    const cleanPath = cleanRemotePath(path)
     const loadId = ++pendingLoadId
     loading.value = true
     error.value = ''
     try {
-      const entries = await window.liteSSH.sftpReaddir(sessionId(), path)
+      const entries = await window.liteSSH.sftpReaddir(sessionId(), cleanPath)
       if (loadId !== pendingLoadId) return false
 
       const filtered = entries.filter(e => e.name !== '.' && e.name !== '..')
-      currentPath.value = path
-      pathInput.value = path
+      currentPath.value = cleanPath
+      pathInput.value = cleanPath
       await new Promise<void>(resolve => {
         requestAnimationFrame(() => {
           if (loadId === pendingLoadId) {
@@ -67,15 +90,14 @@ export function useSftpNavigation(sessionId: () => string, pwdTracker?: Terminal
       return true
     } catch (err: any) {
       if (loadId !== pendingLoadId) return false
-      if (followTerminalPath.value && !isFallback && pwdTracker) {
+      if (!isFallback && pwdTracker) {
         const prevPwd = pwdTracker.revertCd(sessionId())
-        if (prevPwd && prevPwd !== path) {
+        if (prevPwd && cleanRemotePath(prevPwd) !== cleanPath) {
           terminalPath.value = prevPwd
           return await loadDirectory(prevPwd, true)
         }
       }
       error.value = err.message || '无法加载目录'
-      return false
       return false
     } finally {
       if (loadId === pendingLoadId) {
@@ -87,13 +109,9 @@ export function useSftpNavigation(sessionId: () => string, pwdTracker?: Terminal
   async function navigateTo(entry: FileEntry): Promise<boolean> {
     if (!entry.isDirectory && !entry.isSymlink) return false
     if (entry.isSymlink && !entry.isDirectory) {
-      try {
-        const resolved = await window.liteSSH.sftpRealpath(sessionId(), entry.path)
-        if (!resolved) return false
-        return await loadDirectory(resolved)
-      } catch {
-        return false
-      }
+      const resolved = await resolvePath(entry.path)
+      if (!resolved) return false
+      return await loadDirectory(resolved)
     }
     return await loadDirectory(entry.path)
   }
@@ -121,8 +139,9 @@ export function useSftpNavigation(sessionId: () => string, pwdTracker?: Terminal
       error.value = '无法获取终端当前目录'
       return false
     }
+    const cleanTracked = cleanRemotePath(tracked)
     try {
-      const resolved = await window.liteSSH.sftpRealpath(sessionId(), tracked)
+      const resolved = await window.liteSSH.sftpRealpath(sessionId(), cleanTracked)
       if (resolved && resolved !== currentPath.value) {
         previousTerminalPath.value = terminalPath.value
         terminalPath.value = resolved
@@ -131,9 +150,20 @@ export function useSftpNavigation(sessionId: () => string, pwdTracker?: Terminal
       if (resolved === currentPath.value) {
         return true
       }
+    } catch {
+      try {
+        const pwd = await window.liteSSH.sftpSyncPwd(sessionId())
+        if (pwd) {
+          const cleanPwd = cleanRemotePath(pwd)
+          if (cleanPwd !== currentPath.value) {
+            previousTerminalPath.value = terminalPath.value
+            terminalPath.value = cleanPwd
+            return await loadDirectory(cleanPwd)
+          }
+          return true
+        }
+      } catch {}
       error.value = '无法获取终端当前目录'
-    } catch (err: any) {
-      error.value = err.message || '无法获取终端当前目录'
     }
     return false
   }
@@ -187,5 +217,6 @@ export function useSftpNavigation(sessionId: () => string, pwdTracker?: Terminal
     submitPathInput,
     togglePathInput,
     refresh,
+    resolvePath,
   }
 }

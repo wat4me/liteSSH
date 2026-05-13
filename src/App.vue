@@ -556,7 +556,9 @@ async function restartAllLatencyMonitors() {
           ></div>
           <div class="monitor-panel-wrapper" :style="{ width: monitorWidth + 'px' }">
             <MonitorPanel
+              :key="activeGroup!.connectionId"
               :session-id="activeSession.id"
+              :connection-id="activeGroup!.connectionId"
               :connection-name="activeSession.connectionName"
             />
           </div>
