@@ -353,6 +353,14 @@ onMounted(async () => {
   terminal.open(terminalRef.value)
   terminal.writeln(`\x1b[1;34mConnecting to ${props.connectionName}...\x1b[0m\r\n`)
 
+  // Clear selection when user scrolls viewport away from bottom (prevents ghost highlight)
+  terminal.onScroll((newPosition: number) => {
+    const bufferLength = terminal!.buffer.active.length
+    if (newPosition < bufferLength - terminal!.rows && terminal!.hasSelection()) {
+      terminal!.clearSelection()
+    }
+  })
+
   terminal.attachCustomKeyEventHandler((event: KeyboardEvent) => {
     if (event.type !== 'keydown') return true
 
