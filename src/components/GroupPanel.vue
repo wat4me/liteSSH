@@ -199,7 +199,7 @@ function onUngroupedDragOverConn(e: DragEvent) {
           </div>
           <div v-if="dropIndex === index && dragIndex !== null && dragIndex > index" class="drop-indicator bottom"></div>
         </div>
-        <div v-if="group.id === activeGroupId" class="group-connections">
+        <div class="group-connections">
           <div
             v-for="conn in getConnectionsForGroup(group.id)"
             :key="conn.id"
@@ -229,7 +229,7 @@ function onUngroupedDragOverConn(e: DragEvent) {
           <span class="group-count" v-if="connectionCounts[UNGROUPED_ID]">{{ connectionCounts[UNGROUPED_ID] }}</span>
         </div>
       </div>
-      <div v-if="UNGROUPED_ID === activeGroupId" class="group-connections">
+      <div class="group-connections">
         <div
           v-for="conn in getConnectionsForGroup(UNGROUPED_ID)"
           :key="conn.id"

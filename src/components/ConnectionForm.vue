@@ -31,6 +31,7 @@ const groups = ref<Group[]>([])
 const saving = ref(false)
 const showPassword = ref(false)
 const privateKeyFileName = ref('')
+const authType = ref<'password' | 'key'>('password')
 
 type TestState = 'idle' | 'testing' | 'success' | 'error'
 const testState = ref<TestState>('idle')
@@ -73,6 +74,10 @@ onMounted(async () => {
       x11Host: props.connection.x11Host || '127.0.0.1',
       x11Display: props.connection.x11Display ?? 0,
     }
+    if (props.connection.privateKey) {
+      authType.value = 'key'
+      privateKeyFileName.value = '已加载密钥'
+    }
   } else if (props.defaultGroupId) {
     form.value.group = props.defaultGroupId
   }
@@ -89,6 +94,10 @@ async function handleSave() {
   }
   if (!form.value.username.trim()) {
     ElMessage.warning('请输入用户名')
+    return
+  }
+  if (authType.value === 'key' && !form.value.privateKey.trim()) {
+    ElMessage.warning('请选择私钥文件')
     return
   }
   if (form.value.x11Forwarding) {
@@ -110,7 +119,7 @@ async function handleSave() {
       port: form.value.port,
       username: form.value.username.trim(),
       password: form.value.password,
-      privateKey: form.value.privateKey.trim() || undefined,
+      privateKey: authType.value === 'key' ? form.value.privateKey.trim() || undefined : undefined,
       group: form.value.group || undefined,
       keepaliveInterval: (form.value.keepaliveInterval || 30) * 1000,
       x11Forwarding: form.value.x11Forwarding,
@@ -220,6 +229,15 @@ async function selectPrivateKey() {
 function clearPrivateKey() {
   form.value.privateKey = ''
   privateKeyFileName.value = ''
+  authType.value = 'password'
+}
+
+function switchAuthType(type: 'password' | 'key') {
+  authType.value = type
+  if (type === 'password') {
+    form.value.privateKey = ''
+    privateKeyFileName.value = ''
+  }
 }
 </script>
 
@@ -253,9 +271,17 @@ function clearPrivateKey() {
         </div>
 
         <div class="form-row">
+          <label class="label">认证方式</label>
+          <div class="auth-tabs">
+            <button type="button" class="auth-tab" :class="{ active: authType === 'password' }" @click="switchAuthType('password')">密码</button>
+            <button type="button" class="auth-tab" :class="{ active: authType === 'key' }" @click="switchAuthType('key')">密钥</button>
+          </div>
+        </div>
+
+        <div v-if="authType === 'password'" class="form-row">
           <label class="label">密码</label>
           <div class="password-row">
-            <input v-model="form.password" :type="showPassword ? 'text' : 'password'" :placeholder="form.privateKey ? '密钥密码短语（可选）' : 'SSH 密码'" class="input password-input" />
+            <input v-model="form.password" :type="showPassword ? 'text' : 'password'" placeholder="SSH 密码" class="input password-input" />
             <button type="button" class="btn-toggle-password" @click="showPassword = !showPassword" :title="showPassword ? '隐藏密码' : '显示密码'">
               <svg v-if="!showPassword" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
               <svg v-else width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/><path d="M14.12 14.12a3 3 0 1 1-4.24-4.24"/></svg>
@@ -263,7 +289,7 @@ function clearPrivateKey() {
           </div>
         </div>
 
-        <div class="form-row">
+        <div v-if="authType === 'key'" class="form-row">
           <label class="label">私钥</label>
           <div class="privatekey-row">
             <button type="button" class="btn-select-key" @click="selectPrivateKey">{{ privateKeyFileName || '选择私钥文件...' }}</button>
@@ -271,7 +297,17 @@ function clearPrivateKey() {
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
             </button>
           </div>
-          <div class="hint-text">选择 OpenSSH 格式的私钥文件（如 ~/.ssh/id_rsa）。使用私钥时密码为密钥密码短语。</div>
+          <div class="hint-text">选择 OpenSSH 格式的私钥文件（如 ~/.ssh/id_rsa）。有密码短语请在下方密码字段输入。</div>
+          <div class="form-row" style="margin-top:8px">
+            <label class="label">密钥密码短语（可选）</label>
+            <div class="password-row">
+              <input v-model="form.password" :type="showPassword ? 'text' : 'password'" placeholder="如密钥无密码留空" class="input password-input" />
+              <button type="button" class="btn-toggle-password" @click="showPassword = !showPassword" :title="showPassword ? '隐藏密码' : '显示密码'">
+                <svg v-if="!showPassword" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                <svg v-else width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/><path d="M14.12 14.12a3 3 0 1 1-4.24-4.24"/></svg>
+              </button>
+            </div>
+          </div>
         </div>
 
         <div class="form-row">
@@ -454,6 +490,39 @@ function clearPrivateKey() {
 
 .input::placeholder {
   color: var(--text-secondary);
+}
+
+.auth-tabs {
+  display: flex;
+  gap: 0;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.auth-tab {
+  flex: 1;
+  padding: 8px 0;
+  background: var(--bg-primary);
+  border: none;
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.auth-tab:first-child {
+  border-right: 1px solid var(--border-color);
+}
+
+.auth-tab.active {
+  background: var(--accent);
+  color: #fff;
+}
+
+.auth-tab:hover:not(.active) {
+  background: var(--bg-tertiary);
 }
 
 .privatekey-row {
