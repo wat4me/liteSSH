@@ -99,6 +99,15 @@ declare global {
       onTransferError: (callback: (sessionId: string, transferId: string, error: string) => void) => () => void
 
       updateTitleBar: (theme: string, colors?: { color: string; symbolColor: string }) => void
+
+      // Auto-updater
+      checkForUpdates: () => Promise<{ ok: boolean; info?: any; error?: string }>
+      downloadUpdate: () => Promise<{ ok: boolean; error?: string }>
+      quitAndInstall: () => Promise<void>
+      skipUpdateVersion: (version: string) => Promise<void>
+      getAutoUpdateEnabled: () => Promise<boolean>
+      setAutoUpdateEnabled: (enabled: boolean) => Promise<void>
+      onUpdateStatus: (callback: (status: UpdateStatus) => void) => () => void
     }
   }
 }
@@ -148,6 +157,13 @@ export interface TransferItem {
   status: 'downloading' | 'uploading' | 'completed' | 'error'
   direction: 'download' | 'upload'
   error?: string
+}
+
+export interface UpdateStatus {
+  status: 'checking' | 'available' | 'not-available' | 'downloading' | 'downloaded' | 'error'
+  version?: string
+  progress?: number
+  message?: string
 }
 
 export interface MonitorData {

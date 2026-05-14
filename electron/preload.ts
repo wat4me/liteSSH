@@ -129,4 +129,17 @@ contextBridge.exposeInMainWorld('liteSSH', {
   },
 
   updateTitleBar: (theme: string, colors?: { color: string; symbolColor: string }) => ipcRenderer.send('titlebar:theme', theme, colors),
+
+  // Auto-updater
+  checkForUpdates: () => ipcRenderer.invoke('updater:check'),
+  downloadUpdate: () => ipcRenderer.invoke('updater:download'),
+  quitAndInstall: () => ipcRenderer.invoke('updater:install'),
+  skipUpdateVersion: (version: string) => ipcRenderer.invoke('updater:skipVersion', version),
+  getAutoUpdateEnabled: () => ipcRenderer.invoke('settings:getAutoUpdateEnabled'),
+  setAutoUpdateEnabled: (enabled: boolean) => ipcRenderer.invoke('settings:setAutoUpdateEnabled', enabled),
+  onUpdateStatus: (callback: (status: any) => void) => {
+    const listener = (_event: any, status: any) => callback(status)
+    ipcRenderer.on('updater:status', listener)
+    return () => ipcRenderer.removeListener('updater:status', listener)
+  },
 })

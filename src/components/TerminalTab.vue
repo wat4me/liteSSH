@@ -84,8 +84,14 @@ function getVisibleCommandLine(): string {
   try {
     const activeBuffer = (terminal as any).buffer?.active
     if (!activeBuffer) return ''
-    const line = activeBuffer.getLine(activeBuffer.baseY + activeBuffer.cursorY)
-    return line?.translateToString(true) ?? ''
+    const cursorY = activeBuffer.baseY + activeBuffer.cursorY
+    // Scan backwards from cursor for the first non-empty line (handles cursor advance, multi-line output)
+    for (let offset = 0; offset < 5; offset++) {
+      const line = activeBuffer.getLine(cursorY - offset)
+      const text = line?.translateToString(true) ?? ''
+      if (text.trim()) return text
+    }
+    return ''
   } catch {
     return ''
   }

@@ -412,7 +412,7 @@ function onCdCommand(sessionId: string, command: string) {
   // Always track PWD from cd commands, even before sidebar opens
   pwdTracker.handleCd(sessionId, command)
   if (!fileSidebarRef.value) return
-  if (sidebarSessionId.value === sessionId || activeSessionId.value === sessionId) {
+  if (sidebarSessionId.value === sessionId) {
     fileSidebarRef.value.handleTerminalCd(command)
   }
 }

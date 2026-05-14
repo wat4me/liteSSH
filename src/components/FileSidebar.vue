@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch, onMounted, onBeforeUnmount, inject } from 'vue'
+import { ref, watch, onMounted, onBeforeUnmount, inject, nextTick } from 'vue'
 import type { FileEntry } from '../env.d.ts'
 import { useSftpNavigation } from '../composables/useSftpNavigation'
 import { useTransfers } from '../composables/useTransfers'
@@ -81,6 +81,15 @@ const { persistSessionState, restoreSessionState, clearSessionState } = useSessi
 const showUploadConfirm = ref(false)
 const uploadFiles = ref<{ name: string; path: string }[]>([])
 const uploadTargetPath = ref('')
+const pathInputRef = ref<HTMLInputElement | null>(null)
+
+watch(showPathInput, async (val) => {
+  if (val) {
+    await nextTick()
+    pathInputRef.value?.focus()
+    pathInputRef.value?.select()
+  }
+})
 
 function handleFilesDropped(files: { name: string; path: string }[]) {
   uploadFiles.value = files
@@ -250,6 +259,14 @@ function initPwdTracker() {
   }
 }
 
+async function initPwdTrackerAndSync() {
+  initPwdTracker()
+  if (followTerminalPath.value && sftpReady.value && terminalPath.value && terminalPath.value !== currentPath.value) {
+    await syncCwd()
+    saveCurrentState()
+  }
+}
+
 function handleTerminalCd(command: string) {
   const match = command.match(/(?:^|[;&|]\s*)cd\s+(.+?)$/)
   let path = match ? match[1].trim() : command.trim()
@@ -284,12 +301,12 @@ watch(() => props.sessionId, async (newId, oldId) => {
   if (newId) {
     bindSessionClosedListener(newId)
     if (loadSavedState(newId)) {
-      initPwdTracker()
+      initPwdTrackerAndSync()
       return
     }
     resetState()
     await initSftp()
-    initPwdTracker()
+    await initPwdTrackerAndSync()
     saveCurrentState()
   }
 })
@@ -322,10 +339,10 @@ onMounted(async () => {
   globalThis.addEventListener('click', hideContextMenu)
   if (!loadSavedState(props.sessionId)) {
     await initSftp()
-    initPwdTracker()
+    await initPwdTrackerAndSync()
     saveCurrentState()
   } else {
-    initPwdTracker()
+    initPwdTrackerAndSync()
   }
 })
 
@@ -414,25 +431,25 @@ defineExpose({ handleTerminalCd, clearSessionState })
         </button>
       </div>
 
-      <div class="sidebar-path" @click="togglePathInput">
+      <div class="sidebar-path" :class="{ editing: showPathInput }" @click="showPathInput || togglePathInput()">
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="path-icon">
           <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
         </svg>
         <span v-if="!showPathInput" class="path-text">{{ currentPath }}</span>
+        <form v-if="showPathInput" class="path-inline-form" @submit.prevent="submitPathInput">
+          <input
+            ref="pathInputRef"
+            v-model="pathInput"
+            class="path-input"
+            placeholder="输入路径..."
+            @blur="submitPathInput"
+            @keydown.escape="showPathInput = false"
+          />
+        </form>
         <svg v-if="!showPathInput" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex-shrink:0;opacity:0.5">
           <polyline points="6 9 12 15 18 9"/>
         </svg>
       </div>
-
-      <form v-if="showPathInput" class="path-form" @submit.prevent="submitPathInput">
-        <input
-          v-model="pathInput"
-          class="path-input"
-          placeholder="输入路径..."
-          @blur="submitPathInput"
-          @keydown.escape="showPathInput = false"
-        />
-      </form>
 
       <FileList
         :files="files"
@@ -645,8 +662,13 @@ defineExpose({ handleTerminalCd, clearSessionState })
   flex: 1;
 }
 
-.path-form {
-  padding: 0 10px 4px;
+.sidebar-path.editing {
+  cursor: default;
+}
+
+.path-inline-form {
+  flex: 1;
+  min-width: 0;
 }
 
 .path-input {

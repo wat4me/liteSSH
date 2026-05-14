@@ -138,4 +138,22 @@ export class SettingsStore {
     this.settings.monitorIntervalMs = Math.max(2000, Math.min(30000, Math.round(intervalMs)))
     await this.save()
   }
+
+  getAutoUpdateEnabled(): boolean {
+    return this.settings.autoUpdateEnabled !== false
+  }
+
+  async setAutoUpdateEnabled(enabled: boolean): Promise<void> {
+    this.settings.autoUpdateEnabled = enabled
+    await this.save()
+  }
+
+  getSkippedUpdateVersion(): string {
+    return this.settings.skippedUpdateVersion || ''
+  }
+
+  async setSkippedUpdateVersion(version: string): Promise<void> {
+    this.settings.skippedUpdateVersion = version
+    await this.save()
+  }
 }

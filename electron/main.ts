@@ -3,6 +3,7 @@ import { join } from 'path'
 import { Client } from 'ssh2'
 import { existsSync } from 'fs'
 import { Socket } from 'net'
+import { autoUpdater } from 'electron-updater'
 import { CredentialStore } from './store/credentialStore'
 import { SettingsStore } from './store/settingsStore'
 import { SSHManager } from './ssh/manager'
@@ -319,6 +320,39 @@ app.whenReady().then(async () => {
   await credentialStore.init()
   await settingsStore.init()
   createWindow()
+
+  // Auto-updater setup
+  autoUpdater.logger = console
+  autoUpdater.autoDownload = true
+  autoUpdater.autoInstallOnAppQuit = true
+
+  autoUpdater.on('checking-for-update', () => {
+    mainWindow?.webContents.send('updater:status', { status: 'checking' })
+  })
+  autoUpdater.on('update-available', (info) => {
+    const skippedVersion = settingsStore.getSkippedUpdateVersion()
+    if (info.version === skippedVersion) return
+    mainWindow?.webContents.send('updater:status', { status: 'available', version: info.version })
+  })
+  autoUpdater.on('update-not-available', (info) => {
+    mainWindow?.webContents.send('updater:status', { status: 'not-available', version: info.version })
+  })
+  autoUpdater.on('download-progress', (progress) => {
+    mainWindow?.webContents.send('updater:status', { status: 'downloading', progress: progress.percent })
+  })
+  autoUpdater.on('update-downloaded', (info) => {
+    mainWindow?.webContents.send('updater:status', { status: 'downloaded', version: info.version })
+  })
+  autoUpdater.on('error', (err) => {
+    mainWindow?.webContents.send('updater:status', { status: 'error', message: err.message })
+  })
+
+  // Auto-check after 5 seconds (if auto-update is enabled)
+  if (settingsStore.getAutoUpdateEnabled()) {
+    setTimeout(() => {
+      autoUpdater.checkForUpdates().catch(() => {})
+    }, 5000)
+  }
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
@@ -976,4 +1010,40 @@ ipcMain.handle('monitor:start', (_event, sessionId: string) => {
 ipcMain.handle('monitor:stop', (_event, sessionId: string) => {
   if (!sessionId || typeof sessionId !== 'string') return
   monitorCollector.stop(sessionId)
+})
+
+// Auto-updater IPC
+ipcMain.handle('updater:check', async () => {
+  try {
+    const result = await autoUpdater.checkForUpdates()
+    return { ok: true, info: result?.updateInfo }
+  } catch (err: any) {
+    return { ok: false, error: err.message }
+  }
+})
+
+ipcMain.handle('updater:download', async () => {
+  try {
+    await autoUpdater.downloadUpdate()
+    return { ok: true }
+  } catch (err: any) {
+    return { ok: false, error: err.message }
+  }
+})
+
+ipcMain.handle('updater:install', () => {
+  autoUpdater.quitAndInstall()
+})
+
+ipcMain.handle('updater:skipVersion', async (_event, version: string) => {
+  if (!version || typeof version !== 'string') throw new Error('Invalid version')
+  await settingsStore.setSkippedUpdateVersion(version)
+})
+
+ipcMain.handle('settings:getAutoUpdateEnabled', async () => {
+  return settingsStore.getAutoUpdateEnabled()
+})
+
+ipcMain.handle('settings:setAutoUpdateEnabled', async (_event, enabled: boolean) => {
+  await settingsStore.setAutoUpdateEnabled(enabled)
 })

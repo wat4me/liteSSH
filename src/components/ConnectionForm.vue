@@ -380,6 +380,9 @@ function clearPrivateKey() {
 
 .modal-card {
   width: 420px;
+  max-width: calc(100vw - 32px);
+  max-height: calc(100vh - 32px);
+  overflow-y: auto;
   background: var(--bg-secondary);
   border: 1px solid var(--border-color);
   border-radius: 12px;
