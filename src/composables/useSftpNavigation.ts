@@ -28,10 +28,6 @@ export function useSftpNavigation(sessionId: () => string, pwdTracker?: Terminal
       return await window.liteSSH.sftpRealpath(sessionId(), clean)
     } catch {
       try {
-        const pwd = await window.liteSSH.sftpSyncPwd(sessionId())
-        if (pwd && cleanRemotePath(pwd) === clean) return clean
-      } catch {}
-      try {
         const entries = await window.liteSSH.sftpReaddir(sessionId(), clean)
         if (entries) return clean
       } catch {}
@@ -150,21 +146,42 @@ export function useSftpNavigation(sessionId: () => string, pwdTracker?: Terminal
       if (resolved === currentPath.value) {
         return true
       }
-    } catch {
-      try {
-        const pwd = await window.liteSSH.sftpSyncPwd(sessionId())
-        if (pwd) {
-          const cleanPwd = cleanRemotePath(pwd)
-          if (cleanPwd !== currentPath.value) {
-            previousTerminalPath.value = terminalPath.value
-            terminalPath.value = cleanPwd
-            return await loadDirectory(cleanPwd)
-          }
-          return true
-        }
-      } catch {}
+    } catch {}
+    return false
+  }
+
+  async function syncCwdForce(): Promise<boolean> {
+    const tracked = terminalPath.value
+    if (!tracked) {
       error.value = '无法获取终端当前目录'
+      return false
     }
+    const cleanTracked = cleanRemotePath(tracked)
+    try {
+      const resolved = await window.liteSSH.sftpRealpath(sessionId(), cleanTracked)
+      if (resolved && resolved !== currentPath.value) {
+        previousTerminalPath.value = terminalPath.value
+        terminalPath.value = resolved
+        return await loadDirectory(resolved)
+      }
+      if (resolved === currentPath.value) {
+        return true
+      }
+    } catch {}
+    // Fallback: query PTY directly (may inject command into terminal)
+    try {
+      const pwd = await window.liteSSH.sftpSyncPwd(sessionId())
+      if (pwd) {
+        const cleanPwd = cleanRemotePath(pwd)
+        if (cleanPwd !== currentPath.value) {
+          previousTerminalPath.value = terminalPath.value
+          terminalPath.value = cleanPwd
+          return await loadDirectory(cleanPwd)
+        }
+        return true
+      }
+    } catch {}
+    error.value = '无法获取终端当前目录'
     return false
   }
 
@@ -213,6 +230,7 @@ export function useSftpNavigation(sessionId: () => string, pwdTracker?: Terminal
     goUp,
     goToHome,
     syncCwd,
+    syncCwdForce,
     toggleFollowTerminalPath,
     submitPathInput,
     togglePathInput,

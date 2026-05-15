@@ -197,11 +197,23 @@ export class SSHManager {
     }
   }
 
-  write(sessionId: string, data: string) {
+  write(sessionId: string, data: string): boolean {
     const session = this.sessions.get(sessionId)
-    if (session && session.stream.writable) {
+    if (session?.stream.writable) {
       session.stream.write(data)
+      return true
     }
+    return false
+  }
+
+  resize(sessionId: string, cols: number, rows: number): boolean {
+    const session = this.sessions.get(sessionId)
+    if (session?.stream.writable) {
+      session.stream.setWindow(cols, rows)
+      return true
+    }
+    return false
+  }
   }
 
   resize(sessionId: string, cols: number, rows: number) {
@@ -316,6 +328,7 @@ export class SSHManager {
     }
     this.destroyX11Sockets(session?.x11Sockets)
     this.sessions.delete(sessionId)
+    this.sftpInitPromises.delete(sessionId)
   }
 
   // SFTP Methods

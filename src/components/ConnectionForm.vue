@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, onBeforeUnmount } from 'vue'
 import { ElMessage } from 'element-plus'
 import type { Connection, Group } from '../env.d.ts'
 
@@ -80,6 +80,13 @@ onMounted(async () => {
     }
   } else if (props.defaultGroupId) {
     form.value.group = props.defaultGroupId
+  }
+})
+
+onBeforeUnmount(() => {
+  if (testTimer) {
+    clearTimeout(testTimer)
+    testTimer = null
   }
 })
 

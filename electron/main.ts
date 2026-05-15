@@ -371,6 +371,11 @@ app.on('window-all-closed', () => {
   }
 })
 
+// Clear decrypted password cache when window loses focus
+app.on('browser-window-blur', () => {
+  credentialStore.clearDecryptedCache()
+})
+
 app.on('before-quit', () => {
   for (const [, timer] of latencyTimers) clearInterval(timer)
   latencyTimers.clear()
@@ -778,7 +783,10 @@ ipcMain.handle('ssh:disconnect', (_event, sessionId: string) => {
 ipcMain.on('ssh:write', (_event, sessionId: string, data: string) => {
   if (!sessionId || typeof sessionId !== 'string') return
   if (typeof data !== 'string') return
-  sshManager.write(sessionId, data)
+  const ok = sshManager.write(sessionId, data)
+  if (!ok) {
+    console.warn('[ssh:write] Session not writable, possible disconnect:', sessionId)
+  }
 })
 
 ipcMain.on('ssh:resize', (_event, sessionId: string, cols: number, rows: number) => {

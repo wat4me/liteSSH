@@ -46,6 +46,7 @@ const {
   goUp,
   goToHome,
   syncCwd,
+  syncCwdForce,
   toggleFollowTerminalPath,
   submitPathInput,
   togglePathInput,
@@ -181,7 +182,7 @@ async function handleGoUp() {
 }
 
 async function handleSyncCwd() {
-  await syncCwd()
+  await syncCwdForce()
   saveCurrentState()
 }
 

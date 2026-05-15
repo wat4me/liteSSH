@@ -46,10 +46,13 @@ const fileSidebarRef = ref<InstanceType<typeof FileSidebar> | null>(null)
 const latencyMap = ref<Record<string, number>>({})
 const latencyEnabled = ref(true)
 const latencyIntervalMs = ref(10000)
+const latencyUnsubs: Map<string, () => void> = new Map()
+// Track which connection is measured by which session (one measurement per connection)
+const latencySessionMap = new Map<string, string>()
+
 const monitorVisible = ref(false)
 const monitorWidth = ref(280)
 const monitorEnabled = ref(true)
-
 let resizing = false
 let resizeStartX = 0
 let resizeStartWidth = 0
@@ -57,14 +60,55 @@ let resizingRight = false
 let resizeStartXRight = 0
 let resizeStartWidthRight = 0
 
-function startResize(e: MouseEvent) {
-  resizing = true
-  resizeStartX = e.clientX
-  resizeStartWidth = sidebarWidth.value
-  document.addEventListener('mousemove', onResizeMove)
-  document.addEventListener('mouseup', onResizeUp)
-  document.body.style.cursor = 'col-resize'
-  document.body.style.userSelect = 'none'
+function startLatencyMonitor(connectionId: string) {
+  if (!latencyEnabled.value) return
+  if (latencyUnsubs.has(connectionId)) return
+  const group = getGroupByConnectionId(connectionId)
+  if (!group || group.sessions.length === 0) return
+  const sessionId = group.activeSessionId || group.sessions[0].id
+
+  latencySessionMap.set(connectionId, sessionId)
+  window.liteSSH.sshStartLatencyMonitor(sessionId)
+  const unsub = window.liteSSH.onSshLatency(sessionId, (ms: number) => {
+    latencyMap.value = { ...latencyMap.value, [connectionId]: ms }
+  })
+  latencyUnsubs.set(connectionId, unsub)
+}
+
+function stopLatencyMonitor(connectionId: string) {
+  const unsub = latencyUnsubs.get(connectionId)
+  if (unsub) {
+    unsub()
+    latencyUnsubs.delete(connectionId)
+  }
+  const sessionId = latencySessionMap.get(connectionId)
+  if (sessionId) {
+    window.liteSSH.sshStopLatencyMonitor(sessionId)
+    latencySessionMap.delete(connectionId)
+  }
+  const newMap = { ...latencyMap.value }
+  delete newMap[connectionId]
+  latencyMap.value = newMap
+}
+
+function rebindLatencyForConnection(connectionId: string) {
+  // Called when the measured session closes but other sessions remain
+  const group = getGroupByConnectionId(connectionId)
+  if (!group || group.sessions.length === 0) return
+  latencyUnsubs.delete(connectionId)
+  latencySessionMap.delete(connectionId)
+  startLatencyMonitor(connectionId)
+}
+
+async function restartAllLatencyMonitors() {
+  for (const group of groups.value) {
+    stopLatencyMonitor(group.connectionId)
+  }
+  if (latencyEnabled.value) {
+    for (const group of groups.value) {
+      startLatencyMonitor(group.connectionId)
+    }
+  }
 }
 
 function onResizeMove(e: MouseEvent) {
@@ -87,6 +131,16 @@ function onResizeUp() {
   document.removeEventListener('mouseup', onResizeUp)
   document.body.style.cursor = ''
   document.body.style.userSelect = ''
+}
+
+function startResize(e: MouseEvent) {
+  resizing = true
+  resizeStartX = e.clientX
+  resizeStartWidth = sidebarWidth.value
+  document.addEventListener('mousemove', onResizeMove)
+  document.addEventListener('mouseup', onResizeUp)
+  document.body.style.cursor = 'col-resize'
+  document.body.style.userSelect = 'none'
 }
 
 function startResizeRight(e: MouseEvent) {
@@ -297,7 +351,7 @@ async function createSession(connectionId: string) {
     activeGroupId.value = connectionId
     setSidebarTarget(connectionId, sessionId)
     sidebarVisible.value = true
-    startLatencyMonitor(sessionId)
+    startLatencyMonitor(connectionId)
     await window.liteSSH.recordRecentConnection(connectionId)
     await loadRecentConnections()
   } catch (err: any) {
@@ -328,11 +382,11 @@ async function onCloseGroup(connectionId: string) {
 
   const sessionIds = group.sessions.map((session) => session.id)
   for (const sessionId of sessionIds) {
-    stopLatencyMonitor(sessionId)
     try {
       await window.liteSSH.sshDisconnect(sessionId)
     } catch {}
   }
+  stopLatencyMonitor(connectionId)
 
   const idx = groups.value.findIndex((g) => g.connectionId === connectionId)
   if (idx !== -1) groups.value.splice(idx, 1)
@@ -390,14 +444,30 @@ function removeSessionFromState(sessionId: string) {
 }
 
 async function onCloseSession(sessionId: string) {
-  stopLatencyMonitor(sessionId)
+  const group = getGroupBySessionId(sessionId)
+  const connectionId = group?.connectionId
   await window.liteSSH.sshDisconnect(sessionId)
   removeSessionFromState(sessionId)
+  if (connectionId && latencyUnsubs.has(connectionId)) {
+    if (group.sessions.length > 0) {
+      rebindLatencyForConnection(connectionId)
+    } else {
+      stopLatencyMonitor(connectionId)
+    }
+  }
 }
 
 function onSessionClosed(sessionId: string) {
-  stopLatencyMonitor(sessionId)
+  const group = getGroupBySessionId(sessionId)
+  const connectionId = group?.connectionId
   removeSessionFromState(sessionId)
+  if (connectionId && latencyUnsubs.has(connectionId)) {
+    if (group.sessions.length > 0) {
+      rebindLatencyForConnection(connectionId)
+    } else {
+      stopLatencyMonitor(connectionId)
+    }
+  }
 }
 
 function toggleSidebar() {
@@ -417,45 +487,6 @@ function onCdCommand(sessionId: string, command: string) {
   }
 }
 
-const latencyUnsubs: Map<string, () => void> = new Map()
-
-function startLatencyMonitor(sessionId: string) {
-  if (!latencyEnabled.value) return
-  stopLatencyMonitor(sessionId)
-  window.liteSSH.sshStartLatencyMonitor(sessionId)
-  const unsub = window.liteSSH.onSshLatency(sessionId, (ms: number) => {
-    latencyMap.value = { ...latencyMap.value, [sessionId]: ms }
-  })
-  latencyUnsubs.set(sessionId, unsub)
-}
-
-function stopLatencyMonitor(sessionId: string) {
-  const unsub = latencyUnsubs.get(sessionId)
-  if (unsub) {
-    unsub()
-    latencyUnsubs.delete(sessionId)
-  }
-  window.liteSSH.sshStopLatencyMonitor(sessionId)
-  const newMap = { ...latencyMap.value }
-  delete newMap[sessionId]
-  latencyMap.value = newMap
-}
-
-async function restartAllLatencyMonitors() {
-  for (const group of groups.value) {
-    for (const session of group.sessions) {
-      stopLatencyMonitor(session.id)
-    }
-  }
-  if (latencyEnabled.value) {
-    for (const group of groups.value) {
-      for (const session of group.sessions) {
-        startLatencyMonitor(session.id)
-      }
-    }
-  }
-}
-
 </script>
 
 <template>
@@ -468,6 +499,8 @@ async function restartAllLatencyMonitors() {
         :groups="groups"
         :active-group-id="activeGroupId"
         :recent-connections="recentConnections"
+        :latency-map="latencyEnabled ? latencyMap : null"
+        :latency-enabled="latencyEnabled"
         @select="onSelectGroup"
         @close="onCloseGroup"
         @select-home="onSelectHome"
@@ -527,8 +560,6 @@ async function restartAllLatencyMonitors() {
             :sessions="activeGroup.sessions"
             :active-session-id="activeGroup.activeSessionId"
             :connection-id="activeGroup.connectionId"
-            :latency-map="latencyEnabled ? latencyMap : null"
-            :latency-enabled="latencyEnabled"
             @select="onSelectSession"
             @close="onCloseSession"
             @add="createSession"

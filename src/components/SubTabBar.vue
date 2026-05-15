@@ -5,8 +5,6 @@ defineProps<{
   sessions: { id: string; connectionName: string; tabNumber: number }[]
   activeSessionId: string | null
   connectionId: string
-  latencyMap: Record<string, number> | null
-  latencyEnabled: boolean
 }>()
 
 const emit = defineEmits<{
@@ -14,19 +12,6 @@ const emit = defineEmits<{
   (e: 'close', sessionId: string): void
   (e: 'add', connectionId: string): void
 }>()
-
-function formatLatency(ms: number): string {
-  if (ms < 0) return '✕'
-  if (ms < 1000) return `${Math.round(ms)}ms`
-  return `${(ms / 1000).toFixed(1)}s`
-}
-
-function latencyColor(ms: number): string {
-  if (ms < 0) return 'var(--danger)'
-  if (ms < 200) return 'var(--success)'
-  if (ms < 500) return '#e5a000'
-  return 'var(--danger)'
-}
 </script>
 
 <template>
@@ -40,11 +25,6 @@ function latencyColor(ms: number): string {
         @click="emit('select', session.id)"
       >
         <span class="sub-tab-label">终端 {{ session.tabNumber }}</span>
-        <span
-          v-if="latencyEnabled && latencyMap && latencyMap[session.id] !== undefined"
-          class="sub-tab-latency"
-          :style="{ color: latencyColor(latencyMap[session.id]) }"
-        >{{ formatLatency(latencyMap[session.id]) }}</span>
         <button class="sub-tab-close" @click.stop="emit('close', session.id)">
           <el-icon :size="10"><Close /></el-icon>
         </button>
@@ -106,13 +86,6 @@ function latencyColor(ms: number): string {
   font-weight: 500;
   min-width: 8px;
   text-align: center;
-}
-
-.sub-tab-latency {
-  font-size: 10px;
-  font-weight: 600;
-  font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
-  opacity: 0.85;
 }
 
 .sub-tab-close {

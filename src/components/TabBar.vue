@@ -10,6 +10,8 @@ const props = defineProps<{
   groups: { connectionId: string; connectionName: string; sessions: { id: string }[] }[]
   activeGroupId: string | null
   recentConnections: Connection[]
+  latencyMap: Record<string, number> | null
+  latencyEnabled: boolean
 }>()
 
 const emit = defineEmits<{
@@ -22,6 +24,19 @@ const emit = defineEmits<{
 const showSettings = ref(false)
 const showQuickConnect = ref(false)
 const isHomeActive = computed(() => props.activeGroupId === HOME_ID)
+
+function formatLatency(ms: number): string {
+  if (ms < 0) return '✕'
+  if (ms < 1000) return `${Math.round(ms)}ms`
+  return `${(ms / 1000).toFixed(1)}s`
+}
+
+function latencyColor(ms: number): string {
+  if (ms < 0) return 'var(--danger)'
+  if (ms < 200) return 'var(--success)'
+  if (ms < 500) return '#e5a000'
+  return 'var(--danger)'
+}
 </script>
 
 <template>
@@ -51,6 +66,11 @@ const isHomeActive = computed(() => props.activeGroupId === HOME_ID)
         <div class="tab-indicator"></div>
         <span class="tab-name">{{ group.connectionName }}</span>
         <span v-if="group.sessions.length > 1" class="tab-count">{{ group.sessions.length }}</span>
+        <span
+          v-if="latencyEnabled && latencyMap && latencyMap[group.connectionId] !== undefined"
+          class="tab-latency"
+          :style="{ color: latencyColor(latencyMap[group.connectionId]) }"
+        >{{ formatLatency(latencyMap[group.connectionId]) }}</span>
         <button class="tab-close" @click.stop="emit('close', group.connectionId)">
           <el-icon :size="12"><Close /></el-icon>
         </button>
@@ -213,6 +233,14 @@ const isHomeActive = computed(() => props.activeGroupId === HOME_ID)
   display: inline-flex;
   align-items: center;
   justify-content: center;
+}
+
+.tab-latency {
+  font-size: 10px;
+  font-weight: 600;
+  font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+  opacity: 0.85;
+  margin-left: 2px;
 }
 
 .tab-close {

@@ -37,7 +37,8 @@ export class CredentialStore {
   private connections: Connection[] = []
   private groups: Group[] = []
   private initialized = false
-  private decryptedCache: Map<string, string> = new Map()
+  private decryptedCache: Map<string, { value: string; ts: number }> = new Map()
+  private readonly CACHE_TTL_MS = 5 * 60 * 1000
 
   constructor() {
     const userData = app.getPath('userData')
@@ -203,14 +204,22 @@ export class CredentialStore {
     return this.decryptCached(conn.id)
   }
 
+  clearDecryptedCache(): void {
+    this.decryptedCache.clear()
+  }
+
   private decryptCached(connectionId: string): string {
     const conn = this.connections.find((c) => c.id === connectionId)
     if (!conn) return ''
-    if (this.decryptedCache.has(connectionId)) {
-      return this.decryptedCache.get(connectionId)!
+    const entry = this.decryptedCache.get(connectionId)
+    if (entry && Date.now() - entry.ts < this.CACHE_TTL_MS) {
+      return entry.value
+    }
+    if (entry) {
+      this.decryptedCache.delete(connectionId)
     }
     const decrypted = this.decryptPassword(conn.password, conn.encrypted)
-    this.decryptedCache.set(connectionId, decrypted)
+    this.decryptedCache.set(connectionId, { value: decrypted, ts: Date.now() })
     return decrypted
   }
 
@@ -247,7 +256,7 @@ export class CredentialStore {
     }
 
     await this.saveConnections()
-    this.decryptedCache.set(saved.id, conn.password)
+    this.decryptedCache.set(saved.id, { value: conn.password, ts: Date.now() })
     return {
       ...saved,
       password: conn.password
