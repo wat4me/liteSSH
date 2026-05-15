@@ -214,14 +214,6 @@ export class SSHManager {
     }
     return false
   }
-  }
-
-  resize(sessionId: string, cols: number, rows: number) {
-    const session = this.sessions.get(sessionId)
-    if (session) {
-      session.stream.setWindow(rows, cols, 0, 0)
-    }
-  }
 
   private getX11Host(connection: Connection): string {
     return connection.x11Host?.trim() || '127.0.0.1'
