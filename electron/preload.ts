@@ -44,6 +44,7 @@ contextBridge.exposeInMainWorld('liteSSH', {
 
   sshStartLatencyMonitor: (sessionId: string) => ipcRenderer.invoke('ssh:startLatencyMonitor', sessionId),
   sshStopLatencyMonitor: (sessionId: string) => ipcRenderer.invoke('ssh:stopLatencyMonitor', sessionId),
+  sshMeasureLatency: (sessionId: string) => ipcRenderer.invoke('ssh:measureLatency', sessionId),
 
   getMonitorEnabled: () => ipcRenderer.invoke('settings:getMonitorEnabled'),
   setMonitorEnabled: (enabled: boolean) => ipcRenderer.invoke('settings:setMonitorEnabled', enabled),

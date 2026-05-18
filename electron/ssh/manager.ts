@@ -209,7 +209,7 @@ export class SSHManager {
   resize(sessionId: string, cols: number, rows: number): boolean {
     const session = this.sessions.get(sessionId)
     if (session?.stream.writable) {
-      session.stream.setWindow(cols, rows)
+      session.stream.setWindow(rows, cols, 0, 0)
       return true
     }
     return false
@@ -596,47 +596,11 @@ hasSession(sessionId: string): boolean {
     })
   }
 
-  async queryPwd(sessionId: string): Promise<string> {
+async queryPwd(sessionId: string): Promise<string> {
     const session = this.sessions.get(sessionId)
     if (!session) throw new Error('Session not found')
-    if (!session.stream) return this.sftpExec(sessionId, 'pwd', 5000)
-
-    return new Promise((resolve, reject) => {
-      const marker = `${Date.now()}`
-      const startMarker = `__PWD_S_${marker}__`
-      const endMarker = `__PWD_E_${marker}__`
-
-      let buffer = ''
-      const timeout = setTimeout(() => {
-        session.stream!.removeListener('data', onData)
-        reject(new Error('PWD query timeout'))
-      }, 5000)
-
-      const onData = (data: Buffer) => {
-        buffer += data.toString('utf-8')
-        const clean = buffer
-          .replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '')
-          .replace(/\x1b\][^\x07\x1b]*[\x07\x1b\\]/g, '')
-
-        const startIdx = clean.indexOf(startMarker)
-        const endIdx = clean.indexOf(endMarker)
-
-        if (startIdx !== -1 && endIdx !== -1 && endIdx > startIdx) {
-          clearTimeout(timeout)
-          session.stream!.removeListener('data', onData)
-          const pwd = clean.substring(startIdx + startMarker.length, endIdx).trim()
-          // Erase the injected command and marker output from terminal:
-          // \x1b[A move up one line, \x1b[2K clear line
-          session.stream!.write('\x1b[A\x1b[2K\x1b[A\x1b[2K')
-          resolve(pwd)
-        }
-      }
-
-      session.stream.on('data', onData)
-      // Write entire query in one line; echo only affects input characters,
-      // so suppress with stty; the command line itself will be erased after detection
-      session.stream.write(`stty -echo; printf "%s" "${startMarker}$PWD${endMarker}"; stty echo\r`)
-    })
+    // Use a separate SSH exec channel — no PTY injection, no terminal pollution
+    return this.sftpExec(sessionId, 'pwd', 5000)
   }
 
   async sftpExec(sessionId: string, command: string, timeoutMs = 10000): Promise<string> {

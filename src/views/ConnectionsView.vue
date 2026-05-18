@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Search, Plus } from '@element-plus/icons-vue'
+import { Search, Plus, Download, Upload } from '@element-plus/icons-vue'
 import GroupPanel from '../components/GroupPanel.vue'
 import ConnectionRow from '../components/ConnectionRow.vue'
 import ConnectionForm from '../components/ConnectionForm.vue'
@@ -27,6 +27,7 @@ const showForm = ref(false)
 const editingConnection = ref<Connection | null>(null)
 const testStatuses = ref<Map<string, TestStatus>>(new Map())
 const testTimers = ref<Map<string, ReturnType<typeof setTimeout>>>(new Map())
+const importing = ref(false)
 
 const connectionCounts = computed(() => {
   const counts: Record<string, number> = {}
@@ -155,6 +156,30 @@ async function onMoveConnection(connectionId: string, groupId: string | null) {
 function onAddConnection() {
   editingConnection.value = null
   showForm.value = true
+}
+
+async function handleExport() {
+  try {
+    const ok = await window.liteSSH.exportConnections()
+    if (ok) ElMessage.success('连接配置已导出')
+  } catch (err: any) {
+    ElMessage.error(err.message || '导出失败')
+  }
+}
+
+async function handleImport() {
+  importing.value = true
+  try {
+    const result = await window.liteSSH.importConnections()
+    if (result) {
+      ElMessage.success(`成功导入 ${result.imported}/${result.total} 个连接`)
+      await loadData()
+    }
+  } catch (err: any) {
+    ElMessage.error(err.message || '导入失败')
+  } finally {
+    importing.value = false
+  }
 }
 
 function generateCopyName(originalName: string): string {
@@ -302,10 +327,18 @@ defineExpose({ loadData })
             class="search-input"
           />
         </div>
-        <button class="add-connection-btn" @click="onAddConnection">
-          <el-icon><Plus /></el-icon>
-          <span>新建连接</span>
-        </button>
+        <div class="header-actions">
+          <button class="action-btn" :disabled="importing" @click="handleImport" title="导入配置">
+            <el-icon><Download /></el-icon>
+          </button>
+          <button class="action-btn" @click="handleExport" title="导出全部配置">
+            <el-icon><Upload /></el-icon>
+          </button>
+          <button class="add-connection-btn" @click="onAddConnection">
+            <el-icon><Plus /></el-icon>
+            <span>新建连接</span>
+          </button>
+        </div>
       </div>
 
       <div class="connections-list">
@@ -395,6 +428,38 @@ defineExpose({ loadData })
 
 .search-input::placeholder {
   color: var(--text-secondary);
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.action-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  color: var(--text-secondary);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.action-btn:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--bg-tertiary);
+}
+
+.action-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .add-connection-btn {

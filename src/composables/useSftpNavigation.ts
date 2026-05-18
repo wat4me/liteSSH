@@ -86,6 +86,7 @@ export function useSftpNavigation(sessionId: () => string, pwdTracker?: Terminal
       return true
     } catch (err: any) {
       if (loadId !== pendingLoadId) return false
+      console.warn(`[SFTP] readdir failed for "${cleanPath}":`, err.message || err)
       if (!isFallback && pwdTracker) {
         const prevPwd = pwdTracker.revertCd(sessionId())
         if (prevPwd && cleanRemotePath(prevPwd) !== cleanPath) {
@@ -150,37 +151,38 @@ export function useSftpNavigation(sessionId: () => string, pwdTracker?: Terminal
     return false
   }
 
-  async function syncCwdForce(): Promise<boolean> {
+async function syncCwdForce(): Promise<boolean> {
+    // Try the tracked terminal path first via sftpRealpath
     const tracked = terminalPath.value
-    if (!tracked) {
-      error.value = '无法获取终端当前目录'
-      return false
+    if (tracked) {
+      const cleanTracked = cleanRemotePath(tracked)
+      try {
+        const resolved = await window.liteSSH.sftpRealpath(sessionId(), cleanTracked)
+        if (resolved) {
+          if (resolved !== currentPath.value) {
+            previousTerminalPath.value = terminalPath.value
+            terminalPath.value = resolved
+            if (pwdTracker) pwdTracker.setPwd(sessionId(), resolved)
+            return await loadDirectory(resolved)
+          }
+          terminalPath.value = resolved
+          if (pwdTracker) pwdTracker.setPwd(sessionId(), resolved)
+          return true
+        }
+      } catch {}
     }
-    const cleanTracked = cleanRemotePath(tracked)
+
+    // Fallback: try sftpRealpath on the current directory
     try {
-      const resolved = await window.liteSSH.sftpRealpath(sessionId(), cleanTracked)
+      const resolved = await window.liteSSH.sftpRealpath(sessionId(), '.')
       if (resolved && resolved !== currentPath.value) {
         previousTerminalPath.value = terminalPath.value
         terminalPath.value = resolved
+        if (pwdTracker) pwdTracker.setPwd(sessionId(), resolved)
         return await loadDirectory(resolved)
       }
-      if (resolved === currentPath.value) {
-        return true
-      }
     } catch {}
-    // Fallback: query PTY directly (may inject command into terminal)
-    try {
-      const pwd = await window.liteSSH.sftpSyncPwd(sessionId())
-      if (pwd) {
-        const cleanPwd = cleanRemotePath(pwd)
-        if (cleanPwd !== currentPath.value) {
-          previousTerminalPath.value = terminalPath.value
-          terminalPath.value = cleanPwd
-          return await loadDirectory(cleanPwd)
-        }
-        return true
-      }
-    } catch {}
+
     error.value = '无法获取终端当前目录'
     return false
   }
@@ -236,5 +238,6 @@ export function useSftpNavigation(sessionId: () => string, pwdTracker?: Terminal
     togglePathInput,
     refresh,
     resolvePath,
+    cleanRemotePath,
   }
 }

@@ -46,9 +46,6 @@ const fileSidebarRef = ref<InstanceType<typeof FileSidebar> | null>(null)
 const latencyMap = ref<Record<string, number>>({})
 const latencyEnabled = ref(true)
 const latencyIntervalMs = ref(10000)
-const latencyUnsubs: Map<string, () => void> = new Map()
-// Track which connection is measured by which session (one measurement per connection)
-const latencySessionMap = new Map<string, string>()
 
 const monitorVisible = ref(false)
 const monitorWidth = ref(280)
@@ -60,54 +57,11 @@ let resizingRight = false
 let resizeStartXRight = 0
 let resizeStartWidthRight = 0
 
-function startLatencyMonitor(connectionId: string) {
+function onLatency(sessionId: string, ms: number) {
   if (!latencyEnabled.value) return
-  if (latencyUnsubs.has(connectionId)) return
-  const group = getGroupByConnectionId(connectionId)
-  if (!group || group.sessions.length === 0) return
-  const sessionId = group.activeSessionId || group.sessions[0].id
-
-  latencySessionMap.set(connectionId, sessionId)
-  window.liteSSH.sshStartLatencyMonitor(sessionId)
-  const unsub = window.liteSSH.onSshLatency(sessionId, (ms: number) => {
-    latencyMap.value = { ...latencyMap.value, [connectionId]: ms }
-  })
-  latencyUnsubs.set(connectionId, unsub)
-}
-
-function stopLatencyMonitor(connectionId: string) {
-  const unsub = latencyUnsubs.get(connectionId)
-  if (unsub) {
-    unsub()
-    latencyUnsubs.delete(connectionId)
-  }
-  const sessionId = latencySessionMap.get(connectionId)
-  if (sessionId) {
-    window.liteSSH.sshStopLatencyMonitor(sessionId)
-    latencySessionMap.delete(connectionId)
-  }
-  const newMap = { ...latencyMap.value }
-  delete newMap[connectionId]
-  latencyMap.value = newMap
-}
-
-function rebindLatencyForConnection(connectionId: string) {
-  // Called when the measured session closes but other sessions remain
-  const group = getGroupByConnectionId(connectionId)
-  if (!group || group.sessions.length === 0) return
-  latencyUnsubs.delete(connectionId)
-  latencySessionMap.delete(connectionId)
-  startLatencyMonitor(connectionId)
-}
-
-async function restartAllLatencyMonitors() {
-  for (const group of groups.value) {
-    stopLatencyMonitor(group.connectionId)
-  }
-  if (latencyEnabled.value) {
-    for (const group of groups.value) {
-      startLatencyMonitor(group.connectionId)
-    }
+  const group = getGroupBySessionId(sessionId)
+  if (group) {
+    latencyMap.value = { ...latencyMap.value, [group.connectionId]: ms }
   }
 }
 
@@ -266,7 +220,6 @@ function handleLatencySettingsChange(e: Event) {
   if (detail) {
     latencyEnabled.value = detail.enabled
     latencyIntervalMs.value = detail.intervalMs
-    restartAllLatencyMonitors()
   }
 }
 
@@ -301,8 +254,6 @@ onBeforeUnmount(() => {
   document.removeEventListener('keydown', handleKeydown)
   window.removeEventListener('latency-settings-change', handleLatencySettingsChange)
   window.removeEventListener('monitor-settings-change', handleMonitorSettingsChange)
-  for (const [, unsub] of latencyUnsubs) unsub()
-  latencyUnsubs.clear()
 })
 
 async function loadConnections() {
@@ -351,7 +302,6 @@ async function createSession(connectionId: string) {
     activeGroupId.value = connectionId
     setSidebarTarget(connectionId, sessionId)
     sidebarVisible.value = true
-    startLatencyMonitor(connectionId)
     await window.liteSSH.recordRecentConnection(connectionId)
     await loadRecentConnections()
   } catch (err: any) {
@@ -386,7 +336,6 @@ async function onCloseGroup(connectionId: string) {
       await window.liteSSH.sshDisconnect(sessionId)
     } catch {}
   }
-  stopLatencyMonitor(connectionId)
 
   const idx = groups.value.findIndex((g) => g.connectionId === connectionId)
   if (idx !== -1) groups.value.splice(idx, 1)
@@ -445,29 +394,13 @@ function removeSessionFromState(sessionId: string) {
 
 async function onCloseSession(sessionId: string) {
   const group = getGroupBySessionId(sessionId)
-  const connectionId = group?.connectionId
   await window.liteSSH.sshDisconnect(sessionId)
   removeSessionFromState(sessionId)
-  if (connectionId && latencyUnsubs.has(connectionId)) {
-    if (group.sessions.length > 0) {
-      rebindLatencyForConnection(connectionId)
-    } else {
-      stopLatencyMonitor(connectionId)
-    }
-  }
 }
 
 function onSessionClosed(sessionId: string) {
   const group = getGroupBySessionId(sessionId)
-  const connectionId = group?.connectionId
   removeSessionFromState(sessionId)
-  if (connectionId && latencyUnsubs.has(connectionId)) {
-    if (group.sessions.length > 0) {
-      rebindLatencyForConnection(connectionId)
-    } else {
-      stopLatencyMonitor(connectionId)
-    }
-  }
 }
 
 function toggleSidebar() {
@@ -575,6 +508,7 @@ function onCdCommand(sessionId: string, command: string) {
                 @closed="onSessionClosed"
                 @cd-command="onCdCommand"
                 @reconnect="createSession"
+                @latency="onLatency"
               />
             </KeepAlive>
           </div>

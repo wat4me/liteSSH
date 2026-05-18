@@ -183,6 +183,14 @@ export class CredentialStore {
     return this.connections.map(conn => this.stripPassword(conn))
   }
 
+  getConnectionsForExport(): Connection[] {
+    return this.connections.map(conn => ({
+      ...conn,
+      password: this.decryptCached(conn.id),
+      encrypted: false
+    }))
+  }
+
   getConnection(id: string): Connection | undefined {
     const conn = this.connections.find((c) => c.id === id)
     if (!conn) return undefined

@@ -603,7 +603,7 @@ ipcMain.handle('store:exportConnections', async () => {
   const exportData = {
     version: 1,
     exportedAt: new Date().toISOString(),
-    connections: credentialStore.getConnections(),
+    connections: credentialStore.getConnectionsForExport(),
     groups: credentialStore.getGroups(),
   }
   const result = await dialog.showSaveDialog(mainWindow || undefined, {
@@ -981,6 +981,13 @@ ipcMain.handle('ssh:stopLatencyMonitor', (_event, sessionId: string) => {
     clearInterval(timer)
     latencyTimers.delete(sessionId)
   }
+})
+
+ipcMain.handle('ssh:measureLatency', async (_event, sessionId: string) => {
+  if (!sessionId || typeof sessionId !== 'string') {
+    throw new Error('Invalid session id')
+  }
+  return await sshManager.measureLatency(sessionId)
 })
 
 // Monitor settings

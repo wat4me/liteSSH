@@ -15,6 +15,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   (e: 'select', groupId: string): void
   (e: 'add'): void
+  (e: 'addConnection'): void
   (e: 'rename', group: Group): void
   (e: 'delete', groupId: string): void
   (e: 'setDefault', groupId: string): void

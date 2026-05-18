@@ -52,6 +52,7 @@ const {
   togglePathInput,
   refresh,
   resolvePath,
+  cleanRemotePath,
 } = useSftpNavigation(() => props.sessionId, pwdTracker)
 
 const {
@@ -268,32 +269,49 @@ async function initPwdTrackerAndSync() {
   }
 }
 
-function handleTerminalCd(command: string) {
-  const match = command.match(/(?:^|[;&|]\s*)cd\s+(.+?)$/)
-  let path = match ? match[1].trim() : command.trim()
-  if (!path || path === '~') {
-    goToHome()
-    return
-  }
-  if (path.startsWith('~')) {
-    path = (homePath.value || '/') + path.slice(1)
-  }
-  const basePath = terminalPath.value || currentPath.value || '/'
-  let absolutePath = path.startsWith('/') ? path : (basePath === '/' ? `/${path}` : `${basePath}/${path}`)
-  absolutePath = absolutePath.replace(/\/+$/, '') || '/'
-  resolvePath(absolutePath).then((resolved) => {
-    if (!resolved) {
-      pwdTracker.revertCd(props.sessionId)
-      return
+async function handleTerminalCd(command: string): Promise<void> {
+    if (!sftpReady.value) return
+
+    const sid = props.sessionId
+    const trackedPwd = pwdTracker.getPwd(sid)
+
+    if (!trackedPwd) return
+
+    terminalPath.value = trackedPwd
+
+    if (followTerminalPath.value) {
+      let ok = await loadDirectory(trackedPwd)
+
+      if (ok) {
+        saveCurrentState()
+        return
+      }
+
+      const currentPwd = pwdTracker.getPwd(sid)
+      if (currentPwd && currentPwd !== trackedPwd) {
+        terminalPath.value = currentPwd
+        return
+      }
+
+      try {
+        const resolved = await window.liteSSH.sftpRealpath(sid, trackedPwd)
+        if (resolved && resolved !== trackedPwd) {
+          terminalPath.value = resolved
+          if (pwdTracker) pwdTracker.setPwd(sid, resolved)
+          ok = await loadDirectory(resolved)
+        }
+      } catch {}
+
+      if (!ok) {
+        const reverted = pwdTracker.revertCd(sid)
+        if (reverted) {
+          terminalPath.value = reverted
+        }
+      } else {
+        saveCurrentState()
+      }
     }
-    terminalPath.value = resolved
-    if (followTerminalPath.value && sftpReady.value) {
-      requestAnimationFrame(() => {
-        loadDirectory(resolved).then(() => saveCurrentState())
-      })
-    }
-})
-}
+  }
 
 watch(() => props.sessionId, async (newId, oldId) => {
   if (oldId) {

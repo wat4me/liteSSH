@@ -17,6 +17,7 @@ const emit = defineEmits<{
   (e: 'closed', sessionId: string): void
   (e: 'cdCommand', sessionId: string, command: string): void
   (e: 'reconnect', connectionId: string): void
+  (e: 'latency', sessionId: string, ms: number): void
 }>()
 
 const terminalRef = ref<HTMLDivElement>()
@@ -34,6 +35,7 @@ let unsubData: (() => void) | null = null
 let unsubClosed: (() => void) | null = null
 let unsubError: (() => void) | null = null
 let resizeObserver: ResizeObserver | null = null
+let resizeDebounceTimer: ReturnType<typeof setTimeout> | null = null
 let renderBatch = ''
 let renderBatchRafId: number | null = null
 let commandBuffer = ''
@@ -206,21 +208,23 @@ function submitBufferedCommand() {
   pendingSubmitTimer = null
 }
 
-function flushRenderBatch() {
+function flushRenderBatch(callback?: () => void) {
   if (!terminal || renderBatch.length === 0) {
     renderBatch = ''
     if (renderBatchRafId) {
       cancelAnimationFrame(renderBatchRafId)
       renderBatchRafId = null
     }
+    callback?.()
     return
   }
-  terminal.write(renderBatch)
+  const data = renderBatch
   renderBatch = ''
   if (renderBatchRafId) {
     cancelAnimationFrame(renderBatchRafId)
     renderBatchRafId = null
   }
+  terminal.write(data, callback)
 }
 
 function scheduleRenderFlush() {
@@ -231,15 +235,31 @@ function scheduleRenderFlush() {
   })
 }
 
-function syncTerminalSize() {
-  if (!fitAddon || !terminal || !terminalRef.value || terminalRef.value.offsetWidth === 0) return
+function performResize() {
+  if (!terminal || !fitAddon || !terminalRef.value || terminalRef.value.offsetWidth === 0) return
   try {
+    if (terminal.hasSelection()) {
+      terminal.clearSelection()
+    }
     fitAddon.fit()
     const dims = fitAddon.proposeDimensions()
     if (dims) {
       window.liteSSH.sshResize(props.sessionId, dims.cols, dims.rows)
     }
   } catch {}
+}
+
+function syncTerminalSize() {
+  if (!fitAddon || !terminal || !terminalRef.value || terminalRef.value.offsetWidth === 0) return
+  if (resizeDebounceTimer) {
+    clearTimeout(resizeDebounceTimer)
+    resizeDebounceTimer = null
+  }
+  resizeDebounceTimer = setTimeout(() => {
+    resizeDebounceTimer = null
+    if (!terminal || !fitAddon || !terminalRef.value || terminalRef.value.offsetWidth === 0) return
+    flushRenderBatch(performResize)
+  }, 80)
 }
 
 function handleReconnect() {
@@ -294,13 +314,18 @@ function scheduleTerminalRefresh(shouldFocus = false) {
   requestAnimationFrame(() => {
     nextTick(() => {
       if (!terminal || !fitAddon || !terminalRef.value) return
-      syncTerminalSize()
-      try {
-        terminal.refresh(0, terminal.rows - 1)
-      } catch {}
-      if (shouldFocus) {
-        terminal.focus()
+      if (resizeDebounceTimer) {
+        clearTimeout(resizeDebounceTimer)
+        resizeDebounceTimer = null
       }
+      const afterWrite = () => {
+        performResize()
+        try { terminal!.refresh(0, terminal!.rows - 1) } catch {}
+        if (shouldFocus) {
+          terminal!.focus()
+        }
+      }
+      flushRenderBatch(afterWrite)
     })
   })
 }
@@ -316,6 +341,10 @@ function attachResizeObserver() {
 function detachResizeObserver() {
   resizeObserver?.disconnect()
   resizeObserver = null
+  if (resizeDebounceTimer) {
+    clearTimeout(resizeDebounceTimer)
+    resizeDebounceTimer = null
+  }
 }
 
 onActivated(() => {
@@ -424,8 +453,48 @@ onMounted(async () => {
     return true
   })
 
+  let lastKeyTime = 0
+  let awaitingEcho = false
+  let lastLatencyReportTime = 0
+  let latestKeystrokeLatency = -1
+  let bgLatencyTimer: ReturnType<typeof setInterval> | null = null
+
+  function reportLatency(ms: number) {
+    const now = performance.now()
+    if (now - lastLatencyReportTime >= 10000 || lastLatencyReportTime === 0) {
+      emit('latency', props.sessionId, ms)
+      lastLatencyReportTime = now
+      latestKeystrokeLatency = -1
+    }
+  }
+
+  // Queue for chunked data sending
+  let writeQueue: string = ''
+  let writeTimer: ReturnType<typeof setTimeout> | null = null
+
+  function processWriteQueue() {
+    if (writeQueue.length === 0) {
+      writeTimer = null
+      return
+    }
+    const chunk = writeQueue.substring(0, 32)
+    writeQueue = writeQueue.substring(32)
+    window.liteSSH.sshWrite(props.sessionId, chunk)
+
+    if (writeQueue.length > 0) {
+      writeTimer = setTimeout(processWriteQueue, 10)
+    } else {
+      writeTimer = null
+    }
+  }
+
   terminal.onData((data) => {
     updatePasteState(data)
+
+    if (data.length === 1 && isLocallyEchoable(data) && !isPasting()) {
+      lastKeyTime = performance.now()
+      awaitingEcho = true
+    }
 
     const isSubmit = data === '\r' || data === '\n'
     const isCancel = data === '\x03' || data === '\x15'
@@ -466,7 +535,6 @@ onMounted(async () => {
       for (const line of lines) {
         const trimmed = line.trim()
         if (/(?:^|[;&|]\s*)cd(?:\s|$)/.test(trimmed)) {
-          // Delay cdCommand to let terminal render first
           setTimeout(() => {
             emit('cdCommand', props.sessionId, trimmed)
           }, 50)
@@ -480,17 +548,43 @@ onMounted(async () => {
       }, 20)
     }
 
-    window.liteSSH.sshWrite(props.sessionId, data)
+    if (data.length > 32 || writeQueue.length > 0) {
+      writeQueue += data
+      if (!writeTimer) {
+        processWriteQueue()
+      }
+    } else {
+      window.liteSSH.sshWrite(props.sessionId, data)
+    }
   })
 
-unsubData = window.liteSSH.onSshData(props.sessionId, (data) => {
+  bgLatencyTimer = setInterval(async () => {
+    if (performance.now() - lastLatencyReportTime < 10000) return
+    if (latestKeystrokeLatency !== -1) {
+      reportLatency(latestKeystrokeLatency)
+      return
+    }
+    try {
+      const ms = await window.liteSSH.sshMeasureLatency(props.sessionId)
+      reportLatency(ms)
+    } catch {}
+  }, 10000)
+
+  // Initial measurement
+  window.liteSSH.sshMeasureLatency(props.sessionId).then(reportLatency).catch(() => {})
+
+  unsubData = window.liteSSH.onSshData(props.sessionId, (data) => {
+    if (awaitingEcho) {
+      latestKeystrokeLatency = Math.round(performance.now() - lastKeyTime)
+      reportLatency(latestKeystrokeLatency)
+      awaitingEcho = false
+    }
     if (!terminal) return
     if (data.length > 0) {
       renderBatch += data
       scheduleRenderFlush()
     }
   })
-
 unsubClosed = window.liteSSH.onSshClosed(props.sessionId, () => {
     flushRenderBatch()
     if (terminal) {
@@ -527,6 +621,10 @@ onBeforeUnmount(() => {
   if (renderBatchRafId) {
     cancelAnimationFrame(renderBatchRafId)
     renderBatchRafId = null
+  }
+  if (resizeDebounceTimer) {
+    clearTimeout(resizeDebounceTimer)
+    resizeDebounceTimer = null
   }
   detachResizeObserver()
   unsubData?.()

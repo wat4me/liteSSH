@@ -105,6 +105,8 @@ function latencyColor(ms: number): string {
       </div>
     </div>
 
+    <div class="spacer"></div>
+
     <div v-if="isHomeActive" class="tab-right-actions">
       <div class="settings-wrapper">
         <button class="toolbar-btn" :class="{ active: showSettings }" @click.stop="showSettings = !showSettings; showQuickConnect = false" title="设置">
@@ -130,15 +132,21 @@ function latencyColor(ms: number): string {
   border-bottom: 1px solid var(--border-color);
   display: flex;
   align-items: center;
-  padding-right: 46px;
+  padding-right: 12px;
   transition: background-color 0.3s, border-color 0.3s;
   -webkit-app-region: no-drag;
+}
+
+.spacer {
+  flex: 1;
+  height: 100%;
+  -webkit-app-region: drag;
 }
 
 .tabs-scroll {
   display: flex;
   height: 100%;
-  flex: 1;
+  flex: 0 1 auto;
   overflow-x: auto;
   align-items: center;
   padding-left: 4px;

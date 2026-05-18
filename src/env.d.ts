@@ -58,7 +58,7 @@ declare global {
 
       sshStartLatencyMonitor: (sessionId: string) => Promise<void>
       sshStopLatencyMonitor: (sessionId: string) => Promise<void>
-
+      sshMeasureLatency: (sessionId: string) => Promise<number>
       getMonitorEnabled: () => Promise<boolean>
       setMonitorEnabled: (enabled: boolean) => Promise<void>
       getMonitorIntervalMs: () => Promise<number>

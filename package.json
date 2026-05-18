@@ -1,6 +1,6 @@
 {
   "name": "lite-ssh",
-  "version": "0.1.3",
+  "version": "0.1.5",
   "description": "Lightweight SSH connection manager with embedded terminal",
   "author": "liteSSH",
   "main": "dist-electron/main.js",

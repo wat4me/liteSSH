@@ -10,14 +10,16 @@ const emit = defineEmits<{
   (e: 'close'): void
 }>()
 
+const localTheme = ref<Theme>(theme.value)
 const localBgColor = ref(customColors.value.bgColor)
 const localFontColor = ref(customColors.value.fontColor)
 const downloadPath = ref('')
 const terminalFontSize = ref(14)
 const recentDownloadPaths = ref<string[]>([])
-const importing = ref(false)
 const latencyEnabled = ref(true)
 const latencyIntervalSec = ref(10)
+const monitorEnabled = ref(true)
+const monitorIntervalSec = ref(5)
 
 watch(() => customColors.value, (val) => {
   localBgColor.value = val.bgColor
@@ -25,6 +27,7 @@ watch(() => customColors.value, (val) => {
 })
 
 onMounted(async () => {
+  localTheme.value = theme.value
   downloadPath.value = await window.liteSSH.getDownloadPath()
   terminalFontSize.value = await window.liteSSH.getTerminalFontSize()
   recentDownloadPaths.value = await window.liteSSH.getRecentDownloadPaths()
@@ -35,10 +38,8 @@ onMounted(async () => {
 })
 
 function selectTheme(t: Theme) {
+  localTheme.value = t
   setTheme(t)
-  if (t !== 'custom') {
-    emit('close')
-  }
 }
 
 function onBgColorChange(e: Event) {
@@ -73,29 +74,6 @@ async function updateFontSize(delta: number) {
   await window.liteSSH.setTerminalFontSize(newSize)
 }
 
-async function handleExport() {
-  try {
-    const ok = await window.liteSSH.exportConnections()
-    if (ok) ElMessage.success('连接配置已导出')
-  } catch (err: any) {
-    ElMessage.error(err.message || '导出失败')
-  }
-}
-
-async function handleImport() {
-  importing.value = true
-  try {
-    const result = await window.liteSSH.importConnections()
-    if (result) {
-      ElMessage.success(`成功导入 ${result.imported}/${result.total} 个连接`)
-    }
-  } catch (err: any) {
-    ElMessage.error(err.message || '导入失败')
-  } finally {
-    importing.value = false
-  }
-}
-
 async function addRecentPath() {
   const dir = await window.liteSSH.selectDirectory()
   if (dir) {
@@ -110,41 +88,29 @@ async function useDownloadPath(dir: string) {
   recentDownloadPaths.value = await window.liteSSH.getRecentDownloadPaths()
 }
 
-async function toggleLatency() {
+function toggleLatency() {
   latencyEnabled.value = !latencyEnabled.value
+}
+
+function toggleMonitor() {
+  monitorEnabled.value = !monitorEnabled.value
+}
+
+async function handleGlobalSave() {
   await window.liteSSH.setLatencyEnabled(latencyEnabled.value)
-  emitLatencyChange()
-}
-
-async function saveLatencySettings() {
   await window.liteSSH.setLatencyIntervalMs(latencyIntervalSec.value * 1000)
-  emitLatencyChange()
-}
-
-function emitLatencyChange() {
   window.dispatchEvent(new CustomEvent('latency-settings-change', {
     detail: { enabled: latencyEnabled.value, intervalMs: latencyIntervalSec.value * 1000 }
   }))
-}
 
-const monitorEnabled = ref(true)
-const monitorIntervalSec = ref(5)
-
-async function toggleMonitor() {
-  monitorEnabled.value = !monitorEnabled.value
   await window.liteSSH.setMonitorEnabled(monitorEnabled.value)
-  emitMonitorChange()
-}
-
-async function saveMonitorSettings() {
   await window.liteSSH.setMonitorIntervalMs(monitorIntervalSec.value * 1000)
-  emitMonitorChange()
-}
-
-function emitMonitorChange() {
   window.dispatchEvent(new CustomEvent('monitor-settings-change', {
     detail: { enabled: monitorEnabled.value, intervalMs: monitorIntervalSec.value * 1000 }
   }))
+
+  ElMessage.success('设置已保存')
+  emit('close')
 }
 
 const themeSwatches: Record<Theme, { bg: string; fg: string }> = {
@@ -166,7 +132,7 @@ const themeSwatches: Record<Theme, { bg: string; fg: string }> = {
           v-for="t in themeOrder"
           :key="t"
           class="theme-option"
-          :class="{ active: theme === t }"
+          :class="{ active: localTheme === t }"
           @click="selectTheme(t)"
         >
           <span
@@ -181,7 +147,7 @@ const themeSwatches: Record<Theme, { bg: string; fg: string }> = {
       </div>
     </div>
 
-    <div v-if="theme === 'custom'" class="settings-section custom-colors">
+    <div v-if="localTheme === 'custom'" class="settings-section custom-colors">
       <div class="settings-label">自定义颜色</div>
       <div class="color-row">
         <label class="color-label">背景颜色</label>
@@ -267,7 +233,6 @@ const themeSwatches: Record<Theme, { bg: string; fg: string }> = {
         <button class="font-size-btn" @click="latencyIntervalSec = Math.max(1, latencyIntervalSec - 1)">−</button>
         <span class="font-size-value">{{ latencyIntervalSec }}s</span>
         <button class="font-size-btn" @click="latencyIntervalSec = Math.min(60, latencyIntervalSec + 1)">+</button>
-        <button class="save-btn" @click="saveLatencySettings">保存</button>
       </div>
       <div class="settings-hint">通过 SSH 通道测算真实输入回显延迟</div>
     </div>
@@ -285,19 +250,12 @@ const themeSwatches: Record<Theme, { bg: string; fg: string }> = {
         <button class="font-size-btn" @click="monitorIntervalSec = Math.max(2, monitorIntervalSec - 1)">−</button>
         <span class="font-size-value">{{ monitorIntervalSec }}s</span>
         <button class="font-size-btn" @click="monitorIntervalSec = Math.min(30, monitorIntervalSec + 1)">+</button>
-        <button class="save-btn" @click="saveMonitorSettings">保存</button>
       </div>
       <div class="settings-hint">右侧面板显示 CPU/内存/磁盘等监控信息</div>
     </div>
 
-    <div class="settings-section">
-      <div class="settings-label">数据管理</div>
-      <div class="data-buttons">
-        <button class="data-btn" @click="handleExport">导出连接</button>
-        <button class="data-btn" :disabled="importing" @click="handleImport">
-          {{ importing ? '导入中...' : '导入连接' }}
-        </button>
-      </div>
+    <div class="settings-footer">
+      <button class="global-save-btn" @click="handleGlobalSave">保存并关闭</button>
     </div>
   </div>
 </template>
@@ -691,5 +649,29 @@ const themeSwatches: Record<Theme, { bg: string; fg: string }> = {
 .data-btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+.settings-footer {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border-color);
+  display: flex;
+  justify-content: flex-end;
+}
+
+.global-save-btn {
+  padding: 8px 16px;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+
+.global-save-btn:hover {
+  opacity: 0.85;
 }
 </style>

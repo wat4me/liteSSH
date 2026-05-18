@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { FileEntry } from '../env.d.ts'
 import { formatSize } from '../utils/format'
+import { getFileIcon } from '../utils/fileIcons'
 
 defineProps<{
   files: FileEntry[]
@@ -33,9 +34,7 @@ const emit = defineEmits<{
       class="file-entry file-entry-parent"
       @click="emit('goUp')"
     >
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="file-icon">
-        <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
-      </svg>
+      <span class="file-icon-img file-icon-img-parent" v-html="getFileIcon('', true, false)"></span>
       <span class="file-name">..</span>
     </div>
 
@@ -47,15 +46,7 @@ const emit = defineEmits<{
       @click="entry.isDirectory || entry.isSymlink ? emit('navigate', entry) : undefined"
       @contextmenu="emit('contextMenu', $event, entry)"
     >
-      <svg v-if="entry.isDirectory" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="file-icon file-icon-dir">
-        <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
-      </svg>
-      <svg v-else-if="entry.isSymlink" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="file-icon file-icon-link">
-        <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>
-      </svg>
-      <svg v-else width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="file-icon file-icon-file">
-        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/>
-      </svg>
+      <span class="file-icon-img" v-html="getFileIcon(entry.name, entry.isDirectory, entry.isSymlink)"></span>
       <span class="file-name" :title="entry.name">{{ entry.name }}</span>
       <span v-if="!entry.isDirectory && entry.size > 0" class="file-size">{{ formatSize(entry.size) }}</span>
       <button
@@ -135,20 +126,22 @@ const emit = defineEmits<{
   background: var(--hover-bg);
 }
 
-.file-icon {
+.file-icon-img {
   flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
-.file-icon-dir {
-  color: #58a6ff;
+.file-icon-img :deep(svg) {
+  width: 100%;
+  height: 100%;
 }
 
-.file-icon-link {
-  color: #d2a8ff;
-}
-
-.file-icon-file {
-  color: var(--text-secondary);
+.file-icon-img-parent {
+  color: #54A6F5;
 }
 
 .file-name {

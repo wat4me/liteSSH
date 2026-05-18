@@ -85,7 +85,14 @@ export function useTerminalPwd() {
     delete state[sessionId]
   }
 
-  return { state, initSession, handleCd, revertCd, getPwd, getHomePath, hasSession, removeSession }
+  function setPwd(sessionId: string, pwd: string): void {
+    const st = state[sessionId]
+    if (st) {
+      st.pwd = pwd
+    }
+  }
+
+  return { state, initSession, handleCd, revertCd, getPwd, getHomePath, hasSession, removeSession, setPwd }
 }
 
 function normalizePosixPath(p: string): string {
