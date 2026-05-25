@@ -69,8 +69,6 @@ declare global {
       sftpInit: (sessionId: string) => Promise<void>
       sftpReaddir: (sessionId: string, remotePath: string) => Promise<FileEntry[]>
       sftpRealpath: (sessionId: string, remotePath: string) => Promise<string>
-      sftpExecPwd: (sessionId: string) => Promise<string>
-      sftpSyncPwd: (sessionId: string) => Promise<string>
       sftpExecHome: (sessionId: string) => Promise<string>
       sftpDownload: (sessionId: string, remotePath: string, fileName: string, transferId: string) => void
       sftpUpload: (sessionId: string, localPath: string, remotePath: string, fileName: string, transferId: string) => void

@@ -826,20 +826,6 @@ ipcMain.handle('sftp:realpath', async (_event, sessionId: string, remotePath: st
   return await sshManager.sftpRealpath(sessionId, cleanPath)
 })
 
-ipcMain.handle('sftp:execPwd', async (_event, sessionId: string) => {
-  if (!sessionId || typeof sessionId !== 'string') {
-    throw new Error('Invalid session id')
-  }
-  return await sshManager.sftpExec(sessionId, 'pwd')
-})
-
-ipcMain.handle('sftp:syncPwd', async (_event, sessionId: string) => {
-  if (!sessionId || typeof sessionId !== 'string') {
-    throw new Error('Invalid session id')
-  }
-  return await sshManager.queryPwd(sessionId)
-})
-
 ipcMain.handle('sftp:execHome', async (_event, sessionId: string) => {
   if (!sessionId || typeof sessionId !== 'string') {
     throw new Error('Invalid session id')

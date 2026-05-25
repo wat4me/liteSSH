@@ -16,6 +16,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   (e: 'closed', sessionId: string): void
   (e: 'cdCommand', sessionId: string, command: string): void
+  (e: 'pwdOutput', sessionId: string, pwd: string): void
   (e: 'reconnect', connectionId: string): void
   (e: 'latency', sessionId: string, ms: number): void
 }>()
@@ -41,10 +42,37 @@ let renderBatchRafId: number | null = null
 let commandBuffer = ''
 let commandBufferDirty = false
 let pendingSubmitTimer: ReturnType<typeof setTimeout> | null = null
+let bgLatencyTimer: ReturnType<typeof setInterval> | null = null
+let writeQueue = ''
+let writeTimer: ReturnType<typeof setTimeout> | null = null
 let pastingDepth = 0
 let pastingBuffer = ''
+let pwdQuery: {
+  startMarker: string
+  endMarker: string
+  buffer: string
+  started: boolean
+  timer: ReturnType<typeof setTimeout>
+  resolve: (pwd: string) => void
+  reject: (error: Error) => void
+} | null = null
+let pwdOutputSuppression: {
+  startMarker: string
+  endMarker: string
+  buffer: string
+  started: boolean
+  timer: ReturnType<typeof setTimeout>
+} | null = null
+let pwdQueryDrainTimer: ReturnType<typeof setTimeout> | null = null
 const BRACKET_PASTE_START = '\x1b[200~'
 const BRACKET_PASTE_END = '\x1b[201~'
+
+type TerminalPwdRequestDetail = {
+  sessionId: string
+  handled?: boolean
+  resolve: (pwd: string) => void
+  reject: (error: Error) => void
+}
 
 function updatePasteState(data: string) {
   pastingBuffer += data
@@ -70,6 +98,172 @@ function isPasting(): boolean {
   return pastingDepth > 0
 }
 let capturedSubmitLine = ''
+
+function stripTerminalSequences(text: string): string {
+  return text
+    .replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '')
+    .replace(/\x1b\][^\x07]*(?:\x07|\x1b\\)/g, '')
+    .replace(/\r/g, '\n')
+}
+
+function extractPwdFromQueryOutput(output: string): string | null {
+  const lines = stripTerminalSequences(output)
+    .split('\n')
+    .map(line => line.trim())
+    .filter(Boolean)
+
+  for (let index = lines.length - 1; index >= 0; index--) {
+    const line = lines[index]
+    if (line.startsWith('/')) return line
+  }
+  return null
+}
+
+function clearPwdQuery() {
+  if (!pwdQuery) return
+  clearTimeout(pwdQuery.timer)
+  pwdQuery = null
+}
+
+function clearPwdOutputSuppression() {
+  if (!pwdOutputSuppression) return
+  clearTimeout(pwdOutputSuppression.timer)
+  pwdOutputSuppression = null
+}
+
+function suppressLatePwdOutput(query: { startMarker: string; endMarker: string }, timeoutMs = 5000) {
+  clearPwdOutputSuppression()
+  const timer = setTimeout(() => {
+    pwdOutputSuppression = null
+  }, timeoutMs)
+  pwdOutputSuppression = {
+    startMarker: query.startMarker,
+    endMarker: query.endMarker,
+    buffer: '',
+    started: false,
+    timer,
+  }
+}
+
+function startPwdQueryDrain() {
+  if (pwdQueryDrainTimer) clearTimeout(pwdQueryDrainTimer)
+  pwdQueryDrainTimer = setTimeout(() => {
+    pwdQueryDrainTimer = null
+  }, 120)
+}
+
+function finishPwdQuery(output: string) {
+  const query = pwdQuery
+  if (!query) return
+
+  const pwd = extractPwdFromQueryOutput(output)
+  clearPwdQuery()
+  startPwdQueryDrain()
+
+  if (!pwd) {
+    query.reject(new Error('Unable to read terminal pwd'))
+    return
+  }
+
+  emit('pwdOutput', props.sessionId, pwd)
+  query.resolve(pwd)
+}
+
+function processPwdQueryData(data: string): string {
+  if (pwdQueryDrainTimer) return ''
+  const query = pwdQuery
+  if (!query) return processSuppressedPwdOutput(data)
+
+  query.buffer += data
+
+  if (!query.started) {
+    const startIndex = query.buffer.indexOf(query.startMarker)
+    if (startIndex === -1) return ''
+    query.started = true
+    query.buffer = query.buffer.slice(startIndex + query.startMarker.length)
+  }
+
+  const endIndex = query.buffer.indexOf(query.endMarker)
+  if (endIndex === -1) return ''
+
+  finishPwdQuery(query.buffer.slice(0, endIndex))
+  return ''
+}
+
+function processSuppressedPwdOutput(data: string): string {
+  const suppression = pwdOutputSuppression
+  if (!suppression) return data
+
+  suppression.buffer += data
+
+  if (!suppression.started) {
+    const startIndex = suppression.buffer.indexOf(suppression.startMarker)
+    if (startIndex === -1) return ''
+    suppression.started = true
+    suppression.buffer = suppression.buffer.slice(startIndex + suppression.startMarker.length)
+  }
+
+  const endIndex = suppression.buffer.indexOf(suppression.endMarker)
+  if (endIndex === -1) return ''
+
+  clearPwdOutputSuppression()
+  startPwdQueryDrain()
+  return ''
+}
+
+function requestInteractivePwd(): Promise<string> {
+  if (!terminal) return Promise.reject(new Error('Terminal is not ready'))
+
+  clearPwdOutputSuppression()
+  if (pwdQuery) {
+    const previous = pwdQuery
+    clearPwdQuery()
+    suppressLatePwdOutput(previous)
+    previous.reject(new Error('Superseded by a new pwd request'))
+  }
+
+  const token = `${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`
+  const startMarker = `__LITESSH_PWD_${token}_START__`
+  const endMarker = `__LITESSH_PWD_${token}_END__`
+
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      const query = pwdQuery
+      if (!query) return
+      clearPwdQuery()
+      suppressLatePwdOutput(query)
+      reject(new Error('Terminal pwd request timeout'))
+    }, 5000)
+
+    pwdQuery = {
+      startMarker,
+      endMarker,
+      buffer: '',
+      started: false,
+      timer,
+      resolve,
+      reject,
+    }
+
+    const command =
+      `_lssh_a=__LITESSH_; _lssh_b=PWD_${token}_; ` +
+      `printf '\\n%s%sSTART__\\n' "$_lssh_a" "$_lssh_b"; ` +
+      `pwd; ` +
+      `printf '\\n%s%sEND__\\n' "$_lssh_a" "$_lssh_b"; ` +
+      `unset _lssh_a _lssh_b\r`
+
+    flushRenderBatch(() => {
+      window.liteSSH.sshWrite(props.sessionId, command)
+    })
+  })
+}
+
+function onRequestTerminalPwd(event: Event) {
+  const detail = (event as CustomEvent<TerminalPwdRequestDetail>).detail
+  if (!detail || detail.sessionId !== props.sessionId) return
+  detail.handled = true
+  requestInteractivePwd().then(detail.resolve, detail.reject)
+}
 
 function isLocallyEchoable(data: string): boolean {
   if (data.length === 0) return false
@@ -457,7 +651,6 @@ onMounted(async () => {
   let awaitingEcho = false
   let lastLatencyReportTime = 0
   let latestKeystrokeLatency = -1
-  let bgLatencyTimer: ReturnType<typeof setInterval> | null = null
 
   function reportLatency(ms: number) {
     const now = performance.now()
@@ -469,8 +662,6 @@ onMounted(async () => {
   }
 
   // Queue for chunked data sending
-  let writeQueue: string = ''
-  let writeTimer: ReturnType<typeof setTimeout> | null = null
 
   function processWriteQueue() {
     if (writeQueue.length === 0) {
@@ -580,8 +771,9 @@ onMounted(async () => {
       awaitingEcho = false
     }
     if (!terminal) return
-    if (data.length > 0) {
-      renderBatch += data
+    const visibleData = processPwdQueryData(data)
+    if (visibleData.length > 0) {
+      renderBatch += visibleData
       scheduleRenderFlush()
     }
   })
@@ -600,6 +792,8 @@ unsubClosed = window.liteSSH.onSshClosed(props.sessionId, () => {
     }
   })
 
+  window.addEventListener('request-terminal-pwd', onRequestTerminalPwd)
+
   await nextTick()
   attachResizeObserver()
   scheduleTerminalRefresh(true)
@@ -612,10 +806,31 @@ watch([theme, customColors], () => {
 })
 
 onBeforeUnmount(() => {
+  window.removeEventListener('request-terminal-pwd', onRequestTerminalPwd)
+  if (pwdQuery) {
+    const query = pwdQuery
+    clearPwdQuery()
+    suppressLatePwdOutput(query)
+    query.reject(new Error('Terminal disposed'))
+  }
+  clearPwdOutputSuppression()
+  if (pwdQueryDrainTimer) {
+    clearTimeout(pwdQueryDrainTimer)
+    pwdQueryDrainTimer = null
+  }
   if (pendingSubmitTimer) {
     clearTimeout(pendingSubmitTimer)
     pendingSubmitTimer = null
   }
+  if (bgLatencyTimer) {
+    clearInterval(bgLatencyTimer)
+    bgLatencyTimer = null
+  }
+  if (writeTimer) {
+    clearTimeout(writeTimer)
+    writeTimer = null
+  }
+  writeQueue = ''
   commandBuffer = ''
   renderBatch = ''
   if (renderBatchRafId) {

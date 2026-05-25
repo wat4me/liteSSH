@@ -264,6 +264,17 @@ async function loadRecentConnections() {
   recentConnections.value = await window.liteSSH.getRecentConnections()
 }
 
+async function initSessionPwd(sessionId: string) {
+  try {
+    const home = (await window.liteSSH.sftpExecHome(sessionId)).trim()
+    if (home) {
+      pwdTracker.initSession(sessionId, home)
+    }
+  } catch (err) {
+    console.warn('[PWD] Failed to initialize session home:', err)
+  }
+}
+
 async function createSession(connectionId: string) {
   await loadConnections()
   const conn = connections.value.find((c) => c.id === connectionId)
@@ -271,6 +282,7 @@ async function createSession(connectionId: string) {
 
   try {
     const sessionId = await window.liteSSH.sshConnect(connectionId)
+    void initSessionPwd(sessionId)
     let group = groups.value.find((g) => g.connectionId === connectionId)
 
     const session: Session = {
@@ -434,6 +446,15 @@ function onCdCommand(sessionId: string, command: string) {
   }
 }
 
+function onPwdOutput(sessionId: string, pwd: string) {
+  if (!pwd.startsWith('/')) return
+  if (pwdTracker.hasSession(sessionId)) {
+    pwdTracker.setPwd(sessionId, pwd)
+  } else {
+    pwdTracker.initSession(sessionId, pwdTracker.getHomePath(sessionId) || '/', pwd)
+  }
+}
+
 </script>
 
 <template>
@@ -522,6 +543,7 @@ function onCdCommand(sessionId: string, command: string) {
                 :connection-id="activeSession.connectionId"
                 @closed="onSessionClosed"
                 @cd-command="onCdCommand"
+                @pwd-output="onPwdOutput"
                 @reconnect="createSession"
                 @latency="onLatency"
               />

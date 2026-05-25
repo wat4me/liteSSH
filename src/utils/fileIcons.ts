@@ -19,11 +19,11 @@ const ARCHIVE_ICON = `<svg viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.
 const DOC_ICON = `<svg viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M10 1H3.5C2.67 1 2 1.67 2 2.5V13.5C2 14.33 2.67 15 3.5 15H12.5C13.33 15 14 14.33 14 13.5V5L10 1Z" fill="#4285F4"/><path d="M10 1V5H14" stroke="#4285F4" stroke-width="0.5"/><path d="M5 8H11M5 10H11M5 12H9" stroke="white" stroke-width="0.8" stroke-linecap="round"/></svg>`
 const EXCEL_ICON = `<svg viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M10 1H3.5C2.67 1 2 1.67 2 2.5V13.5C2 14.33 2.67 15 3.5 15H12.5C13.33 15 14 14.33 14 13.5V5L10 1Z" fill="#217346"/><path d="M10 1V5H14" stroke="#217346" stroke-width="0.5"/><text x="8" y="12" font-size="7" font-weight="bold" fill="white" text-anchor="middle" font-family="sans-serif">X</text></svg>`
 
-const FOLDER_ICON_BLUE = `<svg viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M1.5 3.5C1.5 2.67 2.17 2 3 2H6L7.5 3.5H13C13.83 3.5 14.5 4.17 14.5 5V12.5C14.5 13.33 13.83 14 13 14H3C2.17 14 1.5 13.33 1.5 12.5V3.5Z" fill="#54A6F5"/><path d="M1.5 5.5H14.5V12.5C14.5 13.33 13.83 14 13 14H3C2.17 14 1.5 13.33 1.5 12.5V5.5Z" fill="#4285F4"/></svg>`
+const FOLDER_ICON_BLUE = `<svg viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M1.5 4C1.5 3.17 2.17 2.5 3 2.5H6.1C6.45 2.5 6.78 2.65 7.02 2.91L8.02 4H13C13.83 4 14.5 4.67 14.5 5.5V6.6H1.5V4Z" fill="#7DD3FC"/><path d="M1.25 5.5H14.75L13.8 12.8C13.7 13.58 13.04 14.17 12.25 14.17H3.75C2.96 14.17 2.3 13.58 2.2 12.8L1.25 5.5Z" fill="#3B82F6"/><path d="M2.2 6.5H13.8" stroke="white" stroke-opacity="0.28" stroke-linecap="round"/><path d="M2.4 5.5H14.75L14.55 7H2.2L2.4 5.5Z" fill="#60A5FA" fill-opacity="0.62"/></svg>`
 
-const SYMLINK_ICON = `<svg viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M8.5 1.5C5.5 1.5 4 3.2 4 4.8V6.5H7.5V7H3C1.9 7 1 7.9 1 9V12.5C1 13.6 1.9 14.5 3 14.5H5V12.5C5 11.95 5.45 11.5 6 11.5H10C10.55 11.5 11 11.05 11 10.5V8H12.5C13.1 7.3 13.5 6.5 13.5 4.8C13.5 3.2 12 1.5 8.5 1.5Z" fill="#D2A8FF"/><path d="M4.5 3.5C5.05 3.5 5.5 3.95 5.5 4.5C5.5 5.05 5.05 5.5 4.5 5.5C3.95 5.5 3.5 5.05 3.5 4.5C3.5 3.95 3.95 3.5 4.5 3.5Z" fill="white"/><path d="M7.5 14.5C10.5 14.5 12 12.8 12 11.2V9.5H8.5V9H13C14.1 9 15 8.1 15 7V3.5C15 2.4 14.1 1.5 13 1.5H11V3.5C11 4.05 10.55 4.5 10 4.5H6C5.45 4.5 5 4.95 5 5.5V8H3.5C2.9 8.7 2.5 9.5 2.5 11.2C2.5 12.8 4 14.5 7.5 14.5Z" fill="#D2A8FF"/><path d="M11.5 12.5C10.95 12.5 10.5 12.05 10.5 11.5C10.5 10.95 10.95 10.5 11.5 10.5C12.05 10.5 12.5 10.95 12.5 11.5C12.5 12.05 12.05 12.5 11.5 12.5Z" fill="white"/></svg>`
+const SYMLINK_ICON = `<svg viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M1.5 4C1.5 3.17 2.17 2.5 3 2.5H6.1C6.45 2.5 6.78 2.65 7.02 2.91L8.02 4H13C13.83 4 14.5 4.67 14.5 5.5V6.6H1.5V4Z" fill="#C4B5FD"/><path d="M1.25 5.5H14.75L13.8 12.8C13.7 13.58 13.04 14.17 12.25 14.17H3.75C2.96 14.17 2.3 13.58 2.2 12.8L1.25 5.5Z" fill="#8B5CF6"/><path d="M2.4 5.5H14.75L14.55 7H2.2L2.4 5.5Z" fill="#A78BFA" fill-opacity="0.68"/><path d="M6.15 10.9H5.2C4.15 10.9 3.3 10.05 3.3 9C3.3 7.95 4.15 7.1 5.2 7.1H6.15" stroke="white" stroke-width="1.1" stroke-linecap="round"/><path d="M9.85 7.1H10.8C11.85 7.1 12.7 7.95 12.7 9C12.7 10.05 11.85 10.9 10.8 10.9H9.85" stroke="white" stroke-width="1.1" stroke-linecap="round"/><path d="M5.8 9H10.2" stroke="white" stroke-width="1.1" stroke-linecap="round"/></svg>`
 
-const DEFAULT_FILE_ICON = `<svg viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M10 1H3.5C2.67 1 2 1.67 2 2.5V13.5C2 14.33 2.67 15 3.5 15H12.5C13.33 15 14 14.33 14 13.5V5L10 1Z" fill="#8B8B8B"/><path d="M10 1V5H14" stroke="#8B8B8B" stroke-width="0.3"/></svg>`
+const DEFAULT_FILE_ICON = `<svg viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M10 1.2H3.6C2.72 1.2 2 1.92 2 2.8V13.2C2 14.08 2.72 14.8 3.6 14.8H12.4C13.28 14.8 14 14.08 14 13.2V5.2L10 1.2Z" fill="#6B7280"/><path d="M10 1.2V4C10 4.66 10.54 5.2 11.2 5.2H14" fill="#D1D5DB" fill-opacity="0.72"/><path d="M4.6 8.2H11.4M4.6 10.2H10.2M4.6 12.2H8.8" stroke="white" stroke-opacity="0.6" stroke-width="0.8" stroke-linecap="round"/></svg>`
 
 const extMap: IconMap = {
   '.js': { svg: CODE_ICON, color: '#CBCB41' },
@@ -150,6 +150,7 @@ const nameMap: IconMap = {
   'docker-compose.yaml': { svg: DOCKER_ICON, color: '#2496ED' },
 }
 
+const MAX_COMPILED_CACHE_SIZE = 128
 const compiledCache = new Map<string, string>()
 
 function getExtFromName(name: string): string {
@@ -162,6 +163,23 @@ function buildSvg(info: FileIconInfo): string {
   return info.svg.replace(/fill="currentColor"/g, `fill="${info.color}"`)
 }
 
+function getCachedIcon(key: string): string | undefined {
+  const cached = compiledCache.get(key)
+  if (cached === undefined) return undefined
+  compiledCache.delete(key)
+  compiledCache.set(key, cached)
+  return cached
+}
+
+function setCachedIcon(key: string, svg: string): string {
+  compiledCache.set(key, svg)
+  if (compiledCache.size > MAX_COMPILED_CACHE_SIZE) {
+    const oldestKey = compiledCache.keys().next().value
+    if (oldestKey) compiledCache.delete(oldestKey)
+  }
+  return svg
+}
+
 export function getFileIcon(name: string, isDir: boolean, isSymlink: boolean): string {
   if (isDir && !isSymlink) {
     return FOLDER_ICON_BLUE
@@ -170,27 +188,28 @@ export function getFileIcon(name: string, isDir: boolean, isSymlink: boolean): s
     return SYMLINK_ICON
   }
 
-  const cached = compiledCache.get(name)
-  if (cached !== undefined) return cached
-
   const lowerName = name.toLowerCase()
 
   if (nameMap[lowerName] || nameMap[name]) {
+    const cacheKey = `name:${nameMap[lowerName] ? lowerName : name}`
+    const cached = getCachedIcon(cacheKey)
+    if (cached !== undefined) return cached
+
     const info = nameMap[lowerName] || nameMap[name]
-    const result = buildSvg(info!)
-    compiledCache.set(name, result)
-    return result
+    return setCachedIcon(cacheKey, buildSvg(info!))
   }
 
   const ext = getExtFromName(lowerName)
   if (ext && extMap[ext]) {
-    const info = extMap[ext]
-    const result = buildSvg(info)
-    compiledCache.set(name, result)
-    return result
+    const cacheKey = `ext:${ext}`
+    const cached = getCachedIcon(cacheKey)
+    if (cached !== undefined) return cached
+
+    return setCachedIcon(cacheKey, buildSvg(extMap[ext]))
   }
 
-  const compiledDefault = buildSvg({ svg: DEFAULT_FILE_ICON, color: '#8B8B8B' })
-  compiledCache.set(name, compiledDefault)
-  return compiledDefault
+  const cached = getCachedIcon('default')
+  if (cached !== undefined) return cached
+
+  return setCachedIcon('default', buildSvg({ svg: DEFAULT_FILE_ICON, color: '#8B8B8B' }))
 }

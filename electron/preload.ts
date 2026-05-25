@@ -56,8 +56,6 @@ contextBridge.exposeInMainWorld('liteSSH', {
   sftpInit: (sessionId: string) => ipcRenderer.invoke('sftp:init', sessionId),
   sftpReaddir: (sessionId: string, remotePath: string) => ipcRenderer.invoke('sftp:readdir', sessionId, remotePath),
   sftpRealpath: (sessionId: string, remotePath: string) => ipcRenderer.invoke('sftp:realpath', sessionId, remotePath),
-  sftpExecPwd: (sessionId: string) => ipcRenderer.invoke('sftp:execPwd', sessionId),
-  sftpSyncPwd: (sessionId: string) => ipcRenderer.invoke('sftp:syncPwd', sessionId),
   sftpExecHome: (sessionId: string) => ipcRenderer.invoke('sftp:execHome', sessionId),
   sftpDownload: (sessionId: string, remotePath: string, fileName: string, transferId: string) =>
     ipcRenderer.send('sftp:download', sessionId, remotePath, fileName, transferId),

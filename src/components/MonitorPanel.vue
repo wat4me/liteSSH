@@ -72,7 +72,8 @@ watch(() => props.connectionId, async () => {
 })
 
 watch(() => props.sessionId, (newId) => {
-  if (newId !== monitoredSessionId && monitoredSessionId && !data.value) {
+  if (newId !== monitoredSessionId) {
+    data.value = null
     startMonitor(newId)
   }
 })

@@ -6,6 +6,27 @@ function cleanRemotePath(path: string): string {
   return path.replace(/\/+$/, '') || '/'
 }
 
+type TerminalPwdRequestDetail = {
+  sessionId: string
+  handled?: boolean
+  resolve: (pwd: string) => void
+  reject: (error: Error) => void
+}
+
+function requestTerminalPwd(sessionId: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const detail: TerminalPwdRequestDetail = {
+      sessionId,
+      resolve,
+      reject,
+    }
+    globalThis.dispatchEvent(new CustomEvent<TerminalPwdRequestDetail>('request-terminal-pwd', { detail }))
+    if (!detail.handled) {
+      reject(new Error('No active terminal for pwd request'))
+    }
+  })
+}
+
 export function useSftpNavigation(sessionId: () => string, pwdTracker?: TerminalPwdTracker) {
   const currentPath = ref('')
   const files = ref<FileEntry[]>([])
@@ -72,7 +93,7 @@ export function useSftpNavigation(sessionId: () => string, pwdTracker?: Terminal
       const entries = await window.liteSSH.sftpReaddir(sessionId(), cleanPath)
       if (loadId !== pendingLoadId) return false
 
-      const filtered = entries.filter(e => e.name !== '.' && e.name !== '..')
+      const filtered = entries.filter(entry => entry.name !== '.' && entry.name !== '..')
       currentPath.value = cleanPath
       pathInput.value = cleanPath
       await new Promise<void>(resolve => {
@@ -94,7 +115,9 @@ export function useSftpNavigation(sessionId: () => string, pwdTracker?: Terminal
           return await loadDirectory(prevPwd, true)
         }
       }
-      error.value = err.message || '无法加载目录'
+      if (!isFallback) {
+        error.value = err.message || '无法加载目录'
+      }
       return false
     } finally {
       if (loadId === pendingLoadId) {
@@ -131,59 +154,52 @@ export function useSftpNavigation(sessionId: () => string, pwdTracker?: Terminal
   }
 
   async function syncCwd(): Promise<boolean> {
-    const tracked = terminalPath.value
-    if (!tracked) {
-      error.value = '无法获取终端当前目录'
-      return false
-    }
-    const cleanTracked = cleanRemotePath(tracked)
-    try {
-      const resolved = await window.liteSSH.sftpRealpath(sessionId(), cleanTracked)
-      if (resolved && resolved !== currentPath.value) {
-        previousTerminalPath.value = terminalPath.value
-        terminalPath.value = resolved
-        return await loadDirectory(resolved)
-      }
-      if (resolved === currentPath.value) {
-        return true
-      }
-    } catch {}
-    return false
+    return syncTrackedPath(false)
   }
 
-async function syncCwdForce(): Promise<boolean> {
-    // Try the tracked terminal path first via sftpRealpath
+  async function syncCwdForce(): Promise<boolean> {
+    return syncTrackedPath(true)
+  }
+
+  async function syncTrackedPath(useSftpFallback: boolean): Promise<boolean> {
     const tracked = terminalPath.value
-    if (tracked) {
-      const cleanTracked = cleanRemotePath(tracked)
+    let livePwd = ''
+
+    if (useSftpFallback) {
       try {
-        const resolved = await window.liteSSH.sftpRealpath(sessionId(), cleanTracked)
-        if (resolved) {
-          if (resolved !== currentPath.value) {
-            previousTerminalPath.value = terminalPath.value
-            terminalPath.value = resolved
-            if (pwdTracker) pwdTracker.setPwd(sessionId(), resolved)
-            return await loadDirectory(resolved)
-          }
-          terminalPath.value = resolved
-          if (pwdTracker) pwdTracker.setPwd(sessionId(), resolved)
-          return true
-        }
+        livePwd = cleanRemotePath((await requestTerminalPwd(sessionId())).trim())
       } catch {}
     }
 
-    // Fallback: try sftpRealpath on the current directory
-    try {
-      const resolved = await window.liteSSH.sftpRealpath(sessionId(), '.')
-      if (resolved && resolved !== currentPath.value) {
+    if (!tracked && !livePwd) {
+      error.value = '无法获取终端当前目录'
+      return false
+    }
+
+    const candidates = [
+      livePwd,
+      tracked ? cleanRemotePath(tracked) : '',
+    ].filter(Boolean)
+
+    if (useSftpFallback) candidates.push('.')
+
+    for (const candidate of [...new Set(candidates)]) {
+      try {
+        const resolved = await window.liteSSH.sftpRealpath(sessionId(), candidate)
+        if (!resolved) continue
+
         previousTerminalPath.value = terminalPath.value
         terminalPath.value = resolved
         if (pwdTracker) pwdTracker.setPwd(sessionId(), resolved)
-        return await loadDirectory(resolved)
-      }
-    } catch {}
 
-    error.value = '无法获取终端当前目录'
+        if (resolved === currentPath.value) return true
+        return await loadDirectory(resolved)
+      } catch {}
+    }
+
+    if (useSftpFallback) {
+      error.value = '无法获取终端当前目录'
+    }
     return false
   }
 

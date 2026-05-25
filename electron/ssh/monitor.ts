@@ -274,6 +274,7 @@ export class MonitorCollector {
   private timers: Map<string, { fast: ReturnType<typeof setInterval>; normal: ReturnType<typeof setInterval>; slow: ReturnType<typeof setInterval> }> = new Map()
   private data: Map<string, MonitorData> = new Map()
   private systemInfoDone: Set<string> = new Set()
+  private collecting: Map<string, Set<keyof MonitorData>> = new Map()
   private onData: (sessionId: string, data: MonitorData) => void
   private sshManager: SSHManager
 
@@ -303,18 +304,35 @@ export class MonitorCollector {
         this.stop(sessionId)
         return
       }
-      const current = this.data.get(sessionId)
-      if (!current) return
-      for (const collector of COLLECTORS) {
-        if (!keys.includes(collector.key)) continue
-        try {
-          const partial = await collector.fn(sessionId, this.sshManager)
-          if (!this.data.has(sessionId)) return
-          Object.assign(current, partial)
-        } catch {}
+      let running = this.collecting.get(sessionId)
+      if (!running) {
+        running = new Set()
+        this.collecting.set(sessionId, running)
       }
-      current.timestamp = Date.now()
-      this.onData(sessionId, { ...current })
+      const keysToCollect = keys.filter(key => !running!.has(key))
+      if (keysToCollect.length === 0) return
+      for (const key of keysToCollect) running.add(key)
+
+      const current = this.data.get(sessionId)
+      if (!current) {
+        for (const key of keysToCollect) running.delete(key)
+        return
+      }
+      try {
+        for (const collector of COLLECTORS) {
+          if (!keysToCollect.includes(collector.key)) continue
+          try {
+            const partial = await collector.fn(sessionId, this.sshManager)
+            if (!this.data.has(sessionId)) return
+            Object.assign(current, partial)
+          } catch {}
+        }
+        current.timestamp = Date.now()
+        this.onData(sessionId, { ...current })
+      } finally {
+        for (const key of keysToCollect) running.delete(key)
+        if (running.size === 0) this.collecting.delete(sessionId)
+      }
     }
 
     const timers = {
@@ -346,6 +364,7 @@ export class MonitorCollector {
     }
     this.data.delete(sessionId)
     this.systemInfoDone.delete(sessionId)
+    this.collecting.delete(sessionId)
     prevCpuTimes.delete(sessionId)
     coreCpuPrev.delete(sessionId)
   }

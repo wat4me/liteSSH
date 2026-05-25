@@ -512,6 +512,7 @@ export class SSHManager {
 
       const transfer: ActiveTransfer = {
         readStream,
+        writeStream,
         cancelled: false,
       }
       this.activeTransfers.set(transferId, transfer)
@@ -572,35 +573,35 @@ hasSession(sessionId: string): boolean {
 
     const start = Date.now()
     return new Promise((resolve, reject) => {
+      let resolved = false
+      let execStream: ClientChannel | null = null
+      const finish = (err?: Error) => {
+        if (resolved) return
+        resolved = true
+        clearTimeout(timeout)
+        if (err) {
+          reject(err)
+        } else {
+          resolve(Date.now() - start)
+        }
+      }
       const timeout = setTimeout(() => {
-        reject(new Error('Latency measurement timeout'))
+        try { execStream?.close() } catch {}
+        finish(new Error('Latency measurement timeout'))
       }, 5000)
 
       session.client.exec('true', (err, stream) => {
         if (err) {
-          clearTimeout(timeout)
-          reject(err)
+          finish(err)
           return
         }
-        let resolved = false
-        const finish = () => {
-          if (resolved) return
-          resolved = true
-          clearTimeout(timeout)
-          resolve(Date.now() - start)
-        }
-        stream.on('data', () => { if (!resolved) finish() })
-        stream.stderr.on('data', () => { if (!resolved) finish() })
-        stream.on('close', () => { if (!resolved) finish() })
+        execStream = stream
+        stream.on('data', () => finish())
+        stream.stderr.on('data', () => finish())
+        stream.on('close', () => finish())
+        stream.on('error', (streamErr) => finish(streamErr))
       })
     })
-  }
-
-async queryPwd(sessionId: string): Promise<string> {
-    const session = this.sessions.get(sessionId)
-    if (!session) throw new Error('Session not found')
-    // Use a separate SSH exec channel — no PTY injection, no terminal pollution
-    return this.sftpExec(sessionId, 'pwd', 5000)
   }
 
   async sftpExec(sessionId: string, command: string, timeoutMs = 10000): Promise<string> {
@@ -608,27 +609,44 @@ async queryPwd(sessionId: string): Promise<string> {
     if (!session) throw new Error('Session not found')
 
     return new Promise((resolve, reject) => {
+      let settled = false
+      let execStream: ClientChannel | null = null
+      const finish = (err?: Error, output = '') => {
+        if (settled) return
+        settled = true
+        clearTimeout(timer)
+        if (err) {
+          reject(err)
+        } else {
+          resolve(output.trim())
+        }
+      }
       const timer = setTimeout(() => {
-        reject(new Error(`Exec timeout after ${timeoutMs}ms`))
+        try { execStream?.close() } catch {}
+        finish(new Error(`Exec timeout after ${timeoutMs}ms`))
       }, timeoutMs)
 
       session.client.exec(command, (err, stream) => {
         if (err) {
-          clearTimeout(timer)
-          reject(new Error(`Exec error: ${err.message}`))
+          finish(new Error(`Exec error: ${err.message}`))
           return
         }
 
+        execStream = stream
         let output = ''
         stream.on('data', (data: Buffer) => {
+          if (settled) return
           output += data.toString('utf-8')
         })
         stream.stderr.on('data', (data: Buffer) => {
+          if (settled) return
           output += data.toString('utf-8')
         })
         stream.on('close', () => {
-          clearTimeout(timer)
-          resolve(output.trim())
+          finish(undefined, output)
+        })
+        stream.on('error', (streamErr) => {
+          finish(streamErr)
         })
       })
     })

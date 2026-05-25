@@ -21,7 +21,6 @@ const emit = defineEmits<{
 }>()
 
 type TabType = 'files' | 'downloads' | 'uploads'
-const FOLLOW_SYNC_POLL_MS = 60_000
 
 const activeTab = ref<TabType>('files')
 const pwdTracker = inject<TerminalPwdTracker>('pwdTracker')!
@@ -106,7 +105,6 @@ let unsubStart: (() => void) | null = null
 let unsubProgress: (() => void) | null = null
 let unsubComplete: (() => void) | null = null
 let unsubError: (() => void) | null = null
-let followSyncTimer: ReturnType<typeof setInterval> | null = null
 
 function handleSessionClosed(sessionId: string) {
   if (props.sessionId !== sessionId) return
@@ -126,7 +124,6 @@ function saveCurrentState(sessionId = props.sessionId) {
   persistSessionState(sessionId, {
     activeTab: activeTab.value,
     currentPath: currentPath.value,
-    files: files.value,
     error: error.value,
     sftpReady: sftpReady.value,
     pathInput: pathInput.value,
@@ -144,7 +141,7 @@ function loadSavedState(sessionId: string): boolean {
   if (!cached) return false
   activeTab.value = cached.activeTab
   currentPath.value = cached.currentPath
-  files.value = cached.files
+  files.value = []
   error.value = cached.error
   sftpReady.value = cached.sftpReady
   pathInput.value = cached.pathInput
@@ -157,6 +154,12 @@ function loadSavedState(sessionId: string): boolean {
   // If SFTP is not ready, return false to trigger initSftp
   if (!sftpReady.value) return false
   return true
+}
+
+async function reloadRestoredDirectory() {
+  if (activeTab.value === 'files' && sftpReady.value && currentPath.value && files.value.length === 0) {
+    await loadDirectory(currentPath.value)
+  }
 }
 
 function resetState() {
@@ -229,27 +232,6 @@ function openInFolder(localPath: string) {
   window.liteSSH.shellShowItemInFolder(localPath)
 }
 
-function startFollowSyncTimer() {
-  if (followSyncTimer) return
-  followSyncTimer = setInterval(async () => {
-    if (!sftpReady.value || loading.value) return
-    if (document.visibilityState !== 'visible' || !document.hasFocus()) return
-    if (!currentPath.value) return
-    try {
-      await window.liteSSH.sftpRealpath(props.sessionId, currentPath.value)
-    } catch {
-      return
-    }
-  }, FOLLOW_SYNC_POLL_MS)
-}
-
-function stopFollowSyncTimer() {
-  if (followSyncTimer) {
-    clearInterval(followSyncTimer)
-    followSyncTimer = null
-  }
-}
-
 function initPwdTracker() {
   if (!pwdTracker.hasSession(props.sessionId)) {
     pwdTracker.initSession(props.sessionId, homePath.value, terminalPath.value)
@@ -269,49 +251,51 @@ async function initPwdTrackerAndSync() {
   }
 }
 
+async function syncFromTrackedPwd(trackedPwd: string): Promise<boolean> {
+  if (!sftpReady.value || !followTerminalPath.value) return false
+
+  const cleanTracked = cleanRemotePath(trackedPwd)
+  terminalPath.value = cleanTracked
+  if (cleanTracked === currentPath.value) return true
+
+  // Save the current known-good path before attempting to load the new one.
+  // This is more reliable than pwdTracker.revertCd() because previousPwd can be
+  // corrupted by rapid sequential cd commands.
+  const knownGoodPath = currentPath.value
+
+  // Use isFallback=true to prevent loadDirectory's internal revert logic
+  // (which relies on previousPwd). We handle the revert ourselves here.
+  const ok = await loadDirectory(cleanTracked, true)
+  if (ok) {
+    saveCurrentState()
+    return true
+  }
+
+  // Failed to load the tracked path — revert to the last known-good path
+  if (knownGoodPath) {
+    terminalPath.value = knownGoodPath
+    pwdTracker.setPwd(props.sessionId, knownGoodPath)
+    // Don't need to reload since currentPath/files are still showing knownGoodPath
+    saveCurrentState()
+  }
+  return false
+}
+
 async function handleTerminalCd(command: string): Promise<void> {
     if (!sftpReady.value) return
-
-    const sid = props.sessionId
-    const trackedPwd = pwdTracker.getPwd(sid)
-
+    const trackedPwd = pwdTracker.getPwd(props.sessionId)
     if (!trackedPwd) return
-
-    terminalPath.value = trackedPwd
-
-    if (followTerminalPath.value) {
-      let ok = await loadDirectory(trackedPwd)
-
-      if (ok) {
-        saveCurrentState()
-        return
-      }
-
-      const currentPwd = pwdTracker.getPwd(sid)
-      if (currentPwd && currentPwd !== trackedPwd) {
-        terminalPath.value = currentPwd
-        return
-      }
-
-      try {
-        const resolved = await window.liteSSH.sftpRealpath(sid, trackedPwd)
-        if (resolved && resolved !== trackedPwd) {
-          terminalPath.value = resolved
-          if (pwdTracker) pwdTracker.setPwd(sid, resolved)
-          ok = await loadDirectory(resolved)
-        }
-      } catch {}
-
-      if (!ok) {
-        const reverted = pwdTracker.revertCd(sid)
-        if (reverted) {
-          terminalPath.value = reverted
-        }
-      } else {
-        saveCurrentState()
-      }
-    }
+    await syncFromTrackedPwd(trackedPwd)
   }
+
+watch(
+  () => pwdTracker.state[props.sessionId]?.pwd,
+  async (trackedPwd) => {
+    if (!trackedPwd) return
+    await syncFromTrackedPwd(trackedPwd)
+  },
+  { flush: 'post' }
+)
 
 watch(() => props.sessionId, async (newId, oldId) => {
   if (oldId) {
@@ -320,7 +304,9 @@ watch(() => props.sessionId, async (newId, oldId) => {
   if (newId) {
     bindSessionClosedListener(newId)
     if (loadSavedState(newId)) {
-      initPwdTrackerAndSync()
+      await initPwdTrackerAndSync()
+      await reloadRestoredDirectory()
+      saveCurrentState()
       return
     }
     resetState()
@@ -330,13 +316,7 @@ watch(() => props.sessionId, async (newId, oldId) => {
   }
 })
 
-watch(followTerminalPath, (on) => {
-  if (on) startFollowSyncTimer()
-  else stopFollowSyncTimer()
-})
-
 onMounted(async () => {
-  if (followTerminalPath.value) startFollowSyncTimer()
   bindSessionClosedListener(props.sessionId)
 
   unsubStart = window.liteSSH.onTransferStart((sessionId, transferId, fileName, localPath, direction) => {
@@ -361,12 +341,13 @@ onMounted(async () => {
     await initPwdTrackerAndSync()
     saveCurrentState()
   } else {
-    initPwdTrackerAndSync()
+    await initPwdTrackerAndSync()
+    await reloadRestoredDirectory()
+    saveCurrentState()
   }
 })
 
 onBeforeUnmount(() => {
-  stopFollowSyncTimer()
   saveCurrentState()
   unsubClosed?.()
   unsubStart?.()
@@ -618,19 +599,22 @@ defineExpose({ handleTerminalCd, clearSessionState })
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 24px;
-  height: 24px;
+  width: 28px;
+  height: 28px;
   border: none;
-  background: none;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--bg-tertiary) 70%, transparent), transparent);
   color: var(--text-secondary);
-  border-radius: 4px;
+  border-radius: 7px;
   cursor: pointer;
   transition: all 0.15s;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.04);
 }
 
 .sidebar-btn:hover {
   background: var(--bg-tertiary);
   color: var(--text-primary);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.12), inset 0 0 0 1px rgba(255, 255, 255, 0.08);
 }
 
 .sidebar-btn-close:hover {

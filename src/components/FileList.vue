@@ -1,9 +1,10 @@
 <script setup lang="ts">
+import { computed, ref, watch } from 'vue'
 import type { FileEntry } from '../env.d.ts'
 import { formatSize } from '../utils/format'
 import { getFileIcon } from '../utils/fileIcons'
 
-defineProps<{
+const props = defineProps<{
   files: FileEntry[]
   currentPath: string
   loading: boolean
@@ -16,6 +17,27 @@ const emit = defineEmits<{
   (e: 'download', entry: FileEntry): void
   (e: 'contextMenu', event: MouseEvent, entry: FileEntry): void
 }>()
+
+const INITIAL_FILE_LIMIT = 20
+const fileLimit = ref(INITIAL_FILE_LIMIT)
+
+const directories = computed(() => props.files.filter(entry => entry.isDirectory || entry.isSymlink))
+const regularFiles = computed(() => props.files.filter(entry => !entry.isDirectory && !entry.isSymlink))
+const visibleFiles = computed(() => regularFiles.value.slice(0, fileLimit.value))
+const hiddenFileCount = computed(() => Math.max(0, regularFiles.value.length - visibleFiles.value.length))
+const visibleEntries = computed(() => [...directories.value, ...visibleFiles.value])
+
+function showMoreFiles() {
+  fileLimit.value += INITIAL_FILE_LIMIT
+}
+
+function showAllFiles() {
+  fileLimit.value = regularFiles.value.length
+}
+
+watch(() => props.currentPath, () => {
+  fileLimit.value = INITIAL_FILE_LIMIT
+})
 </script>
 
 <template>
@@ -39,7 +61,7 @@ const emit = defineEmits<{
     </div>
 
     <div
-      v-for="entry in files"
+      v-for="entry in visibleEntries"
       :key="entry.path"
       class="file-entry"
       :class="{ 'file-entry-dir': entry.isDirectory || entry.isSymlink }"
@@ -59,6 +81,14 @@ const emit = defineEmits<{
           <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
         </svg>
       </button>
+    </div>
+
+    <div v-if="hiddenFileCount > 0" class="file-list-more">
+      <span>已显示全部 {{ directories.length }} 个目录，文件显示 {{ visibleFiles.length }} / {{ regularFiles.length }}</span>
+      <div class="file-list-more-actions">
+        <button class="file-list-more-btn" @click="showMoreFiles">再显示 20 个文件</button>
+        <button class="file-list-more-btn" @click="showAllFiles">显示全部文件</button>
+      </div>
     </div>
 
     <div v-if="files.length === 0 && currentPath && !loading" class="sidebar-empty">
@@ -105,13 +135,15 @@ const emit = defineEmits<{
 .file-entry {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 3px 10px;
+  gap: 8px;
+  padding: 4px 10px;
   font-size: 12px;
   color: var(--text-primary);
   cursor: default;
-  transition: background 0.1s;
-  min-height: 24px;
+  transition: background 0.12s, transform 0.12s;
+  min-height: 28px;
+  border-radius: 6px;
+  margin: 1px 6px;
 }
 
 .file-entry-dir {
@@ -120,6 +152,7 @@ const emit = defineEmits<{
 
 .file-entry:hover {
   background: var(--hover-bg);
+  transform: translateX(1px);
 }
 
 .file-entry-parent:hover {
@@ -128,16 +161,20 @@ const emit = defineEmits<{
 
 .file-icon-img {
   flex-shrink: 0;
-  width: 16px;
-  height: 16px;
+  width: 22px;
+  height: 22px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--hover-bg) 68%, transparent);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.04);
 }
 
 .file-icon-img :deep(svg) {
-  width: 100%;
-  height: 100%;
+  width: 18px;
+  height: 18px;
+  filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.18));
 }
 
 .file-icon-img-parent {
@@ -175,6 +212,38 @@ const emit = defineEmits<{
 .file-download-btn:hover {
   color: var(--accent);
   background: var(--accent-bg);
+}
+
+.file-list-more {
+  margin: 8px 10px 10px;
+  padding: 8px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--bg-tertiary) 70%, transparent);
+  color: var(--text-secondary);
+  font-size: 11px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.file-list-more-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.file-list-more-btn {
+  border: none;
+  background: var(--button-bg);
+  color: var(--text-primary);
+  border-radius: 5px;
+  padding: 4px 8px;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.file-list-more-btn:hover {
+  background: var(--hover-bg);
 }
 
 .sidebar-empty {
