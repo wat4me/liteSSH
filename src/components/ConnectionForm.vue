@@ -9,7 +9,7 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  (e: 'saved'): void
+  (e: 'saved', connection: Connection): void
   (e: 'cancel'): void
 }>()
 
@@ -136,9 +136,9 @@ async function handleSave() {
     if (props.connection) {
       data.id = props.connection.id
     }
-    await window.liteSSH.saveConnection(data)
+    const saved = await window.liteSSH.saveConnection(data)
     ElMessage.success(props.connection?.id ? '连接已更新' : '连接已添加')
-    emit('saved')
+    emit('saved', saved)
   } catch (err: any) {
     ElMessage.error(err.message || '保存失败')
   } finally {

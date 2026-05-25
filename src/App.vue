@@ -265,11 +265,8 @@ async function loadRecentConnections() {
 }
 
 async function createSession(connectionId: string) {
-  let conn = connections.value.find((c) => c.id === connectionId)
-  if (!conn) {
-    await loadConnections()
-    conn = connections.value.find((c) => c.id === connectionId)
-  }
+  await loadConnections()
+  const conn = connections.value.find((c) => c.id === connectionId)
   if (!conn) return
 
   try {
@@ -312,6 +309,23 @@ async function createSession(connectionId: string) {
 
 async function onConnect(connectionId: string) {
   await createSession(connectionId)
+}
+
+function syncConnectionName(connection: Connection) {
+  connections.value = connections.value.map((item) =>
+    item.id === connection.id ? { ...item, ...connection } : item
+  )
+  recentConnections.value = recentConnections.value.map((item) =>
+    item.id === connection.id ? { ...item, ...connection } : item
+  )
+
+  const group = groups.value.find((item) => item.connectionId === connection.id)
+  if (!group) return
+
+  group.connectionName = connection.name
+  for (const session of group.sessions) {
+    session.connectionName = connection.name
+  }
 }
 
 function onSelectGroup(connectionId: string) {
@@ -444,6 +458,7 @@ function onCdCommand(sessionId: string, command: string) {
         ref="connectionsViewRef"
         v-show="isHomeActive"
         @connect="onConnect"
+        @connection-saved="syncConnectionName"
       />
 
       <div v-show="!isHomeActive" class="workspace-content">

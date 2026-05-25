@@ -17,6 +17,7 @@ interface TestStatus {
 
 const emit = defineEmits<{
   (e: 'connect', connectionId: string): void
+  (e: 'connection-saved', connection: Connection): void
 }>()
 
 const connections = ref<Connection[]>([])
@@ -276,10 +277,12 @@ function getTestStatus(connectionId: string): TestStatus {
   return testStatuses.value.get(connectionId) || { state: 'idle' }
 }
 
-async function onFormSaved() {
+async function onFormSaved(savedConnection: Connection) {
   showForm.value = false
   editingConnection.value = null
   await loadData()
+  const refreshed = connections.value.find((conn) => conn.id === savedConnection.id) || savedConnection
+  emit('connection-saved', refreshed)
 }
 
 function onFormCancel() {
