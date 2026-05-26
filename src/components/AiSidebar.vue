@@ -1,12 +1,29 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
-import type { AiChatMessage, AiChatResult, AiChatStreamPayload, AiHistoryRecord, AiHistorySummary, AiSettings, AiUsage } from '../env.d.ts'
+import type {
+  AiChatMessage,
+  AiChatResult,
+  AiChatStreamPayload,
+  AiHistoryRecord,
+  AiHistorySummary,
+  AiSettings,
+  AiUsage,
+} from '../env.d.ts'
+
+const DEFAULT_SYSTEM_PROMPT = [
+  '你是 liteSSH 内置的 AI 助手，主要帮助用户理解和处理 SSH 终端、Linux 命令、报错排查、服务运维和文件操作问题。',
+  '请默认使用简体中文回答；只有当用户明确要求其他语言，或需要保留原始命令、日志、错误信息、配置字段时，才使用对应语言。',
+  '回答要简洁、可执行，优先给出下一步操作和判断依据。涉及命令时，用 Markdown 代码块展示，并说明命令作用。',
+  '对 rm、chmod、chown、mkfs、dd、防火墙、重启服务、修改 SSH 配置等可能造成破坏或断连的操作，必须先提醒风险，并给出更安全的验证步骤。',
+  '如果用户提供的是终端选中文本、日志或报错，请先概括关键信息，再给出排查步骤。',
+].join('\n')
 
 const props = defineProps<{
   sessionId: string
   selectionRequest?: {
     id: number
+    sessionId: string
     text: string
     mode: 'send' | 'insert'
   } | null
@@ -14,6 +31,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   (e: 'close'): void
+  (e: 'selectionConsumed', id: number): void
 }>()
 
 type ChatItem = AiChatMessage & {
@@ -33,13 +51,7 @@ const settings = ref<AiSettings>({
   baseUrl: 'https://api.openai.com/v1',
   model: 'gpt-4o-mini',
   apiKey: '',
-  systemPrompt: [
-    '浣犳槸 liteSSH 鍐呯疆鐨?AI 鍔╂墜锛屼富瑕佸府鍔╃敤鎴风悊瑙ｅ拰澶勭悊 SSH 缁堢銆丩inux 鍛戒护銆佹姤閿欐帓鏌ャ€佹湇鍔¤繍缁村拰鏂囦欢鎿嶄綔闂銆?,
-    '璇烽粯璁や娇鐢ㄧ畝浣撲腑鏂囧洖绛旓紱鍙湁褰撶敤鎴锋槑纭姹傚叾浠栬瑷€锛屾垨闇€瑕佷繚鐣欏師濮嬪懡浠ゃ€佹棩蹇椼€侀敊璇俊鎭€侀厤缃瓧娈垫椂锛屾墠浣跨敤瀵瑰簲璇█銆?,
-    '鍥炵瓟瑕佺畝娲併€佸彲鎵ц锛屼紭鍏堢粰鍑轰笅涓€姝ユ搷浣滃拰鍒ゆ柇渚濇嵁銆傛秹鍙婂懡浠ゆ椂锛岀敤 Markdown 浠ｇ爜鍧楀睍绀猴紝骞惰鏄庡懡浠や綔鐢ㄣ€?,
-    '瀵?rm銆乧hmod銆乧hown銆乵kfs銆乨d銆侀槻鐏銆侀噸鍚湇鍔°€佷慨鏀?SSH 閰嶇疆绛夊彲鑳介€犳垚鐮村潖鎴栨柇杩炵殑鎿嶄綔锛屽繀椤诲厛鎻愰啋椋庨櫓锛屽苟缁欏嚭鏇村畨鍏ㄧ殑楠岃瘉姝ラ銆?,
-    '濡傛灉鐢ㄦ埛鎻愪緵鐨勬槸缁堢閫変腑鏂囨湰銆佹棩蹇楁垨鎶ラ敊锛岃鍏堟鎷叧閿俊鎭紝鍐嶇粰鍑烘帓鏌ユ楠ゃ€?,
-  ].join('\n'),
+  systemPrompt: DEFAULT_SYSTEM_PROMPT,
   temperature: 0.2,
 })
 const draftSettings = ref<AiSettings>({ ...settings.value })
@@ -49,6 +61,8 @@ const loading = ref(false)
 const showSettings = ref(false)
 const showHistory = ref(false)
 const historyList = ref<AiHistorySummary[]>([])
+const consumedSelectionIds = new Set<number>()
+let activeStreamUnsubscribe: (() => void) | null = null
 
 const canSend = computed(() => input.value.trim().length > 0 && !loading.value)
 
@@ -57,6 +71,11 @@ onMounted(async () => {
   draftSettings.value = { ...settings.value }
   await loadHistory()
   await loadHistoryList()
+})
+
+onBeforeUnmount(() => {
+  activeStreamUnsubscribe?.()
+  activeStreamUnsubscribe = null
 })
 
 watch(
@@ -72,6 +91,11 @@ watch(
   () => props.selectionRequest,
   async (request) => {
     if (!request?.text) return
+    if (request.sessionId !== props.sessionId) return
+    if (consumedSelectionIds.has(request.id)) return
+    consumedSelectionIds.add(request.id)
+    emit('selectionConsumed', request.id)
+
     if (request.mode === 'insert') {
       input.value = request.text
       return
@@ -172,9 +196,7 @@ function parseMarkdown(markdown: string): MarkdownBlock[] {
     paragraph.push(line)
   }
 
-  if (code) {
-    blocks.push({ type: 'code', content: code.join('\n'), language: codeLanguage })
-  }
+  if (code) blocks.push({ type: 'code', content: code.join('\n'), language: codeLanguage })
   flushParagraph()
   flushList()
   return blocks
@@ -183,11 +205,11 @@ function parseMarkdown(markdown: string): MarkdownBlock[] {
 function formatUsage(usage?: AiUsage): string {
   if (!usage) return ''
   const parts: string[] = []
-  if (usage.promptTokens !== undefined) parts.push(`杈撳叆 ${usage.promptTokens}`)
-  if (usage.completionTokens !== undefined) parts.push(`杈撳嚭 ${usage.completionTokens}`)
-  if (usage.reasoningTokens !== undefined) parts.push(`鎬濊€?${usage.reasoningTokens}`)
-  if (usage.totalTokens !== undefined) parts.push(`鎬昏 ${usage.totalTokens}`)
-  return parts.join(' 路 ')
+  if (usage.promptTokens !== undefined) parts.push(`输入 ${usage.promptTokens}`)
+  if (usage.completionTokens !== undefined) parts.push(`输出 ${usage.completionTokens}`)
+  if (usage.reasoningTokens !== undefined) parts.push(`思考 ${usage.reasoningTokens}`)
+  if (usage.totalTokens !== undefined) parts.push(`总计 ${usage.totalTokens}`)
+  return parts.join(' · ')
 }
 
 function createMessage(role: AiChatMessage['role'], content: string, error = false, result?: Partial<AiChatResult> & { streaming?: boolean }): ChatItem {
@@ -255,14 +277,14 @@ async function saveSettings() {
     temperature: Number(draftSettings.value.temperature),
   }
   if (!next.baseUrl || !next.model) {
-    ElMessage.warning('璇峰～鍐?AI URL 鍜屾ā鍨嬪悕')
+    ElMessage.warning('请填写 AI URL 和模型名')
     return
   }
 
   await window.liteSSH.setAiSettings(next)
   settings.value = next
   draftSettings.value = { ...next }
-  ElMessage.success('AI 璁剧疆宸蹭繚瀛?)
+  ElMessage.success('AI 设置已保存')
   showSettings.value = false
 }
 
@@ -290,7 +312,7 @@ async function sendText(text: string) {
 
   try {
     const requestId = `ai-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
-    const unsubscribe = window.liteSSH.onAiChatStream(requestId, (payload: AiChatStreamPayload) => {
+    activeStreamUnsubscribe = window.liteSSH.onAiChatStream(requestId, (payload: AiChatStreamPayload) => {
       const current = getAssistantMessage()
       if (payload.type === 'content') {
         updateAssistantMessage({ content: current.content + payload.value })
@@ -310,7 +332,8 @@ async function sendText(text: string) {
         usage: reply.usage || current.usage,
       })
     } finally {
-      unsubscribe()
+      activeStreamUnsubscribe?.()
+      activeStreamUnsubscribe = null
     }
   } catch (err: any) {
     const current = getAssistantMessage()
@@ -324,13 +347,13 @@ async function sendText(text: string) {
         })
       } catch (fallbackErr: any) {
         updateAssistantMessage({
-          content: fallbackErr?.message || err?.message || 'AI 璇锋眰澶辫触',
+          content: fallbackErr?.message || err?.message || 'AI 请求失败',
           error: true,
         })
       }
     } else {
       updateAssistantMessage({
-        content: `${current.content}\n\n${err?.message || 'AI 璇锋眰涓柇'}`,
+        content: `${current.content}\n\n${err?.message || 'AI 请求中断'}`,
         error: true,
       })
     }
@@ -340,6 +363,7 @@ async function sendText(text: string) {
     loading.value = false
   }
 }
+
 async function sendMessage() {
   if (!canSend.value) return
   const content = input.value.trim()
@@ -358,22 +382,22 @@ function clearMessages() {
   <div class="ai-sidebar">
     <div class="ai-header">
       <div>
-        <div class="ai-title">AI 鍔╂墜</div>
+        <div class="ai-title">AI 助手</div>
         <div class="ai-subtitle">{{ settings.model }}</div>
       </div>
       <div class="ai-header-actions">
-        <button class="icon-btn" @click="showHistory = !showHistory" title="鍘嗗彶璁板綍">
+        <button class="icon-btn" @click="showHistory = !showHistory" title="历史记录">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M3 3v5h5"/><path d="M3.05 13A9 9 0 1 0 5.64 6.64L3 8"/><path d="M12 7v5l3 2"/>
           </svg>
         </button>
-        <button class="icon-btn" @click="showSettings = !showSettings" title="AI 璁剧疆">
+        <button class="icon-btn" @click="showSettings = !showSettings" title="AI 设置">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M12 15.5A3.5 3.5 0 1 0 12 8a3.5 3.5 0 0 0 0 7.5z"/>
             <path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 1.55V21a2 2 0 1 1-4 0v-.09A1.7 1.7 0 0 0 9 19.36a1.7 1.7 0 0 0-1.88.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-1.55-1H3a2 2 0 1 1 0-4h.09A1.7 1.7 0 0 0 4.64 9a1.7 1.7 0 0 0-.34-1.88l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-1.55V3a2 2 0 1 1 4 0v.09A1.7 1.7 0 0 0 15 4.64a1.7 1.7 0 0 0 1.88-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.7 1.7 0 0 0 19.4 9a1.7 1.7 0 0 0 1.55 1H21a2 2 0 1 1 0 4h-.09A1.7 1.7 0 0 0 19.4 15z"/>
           </svg>
         </button>
-        <button class="icon-btn close-btn" @click="emit('close')" title="鍏抽棴 AI 闈㈡澘">
+        <button class="icon-btn close-btn" @click="emit('close')" title="关闭 AI 面板">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
           </svg>
@@ -382,7 +406,7 @@ function clearMessages() {
     </div>
 
     <div v-if="showHistory" class="history-box">
-      <div v-if="historyList.length === 0" class="history-empty">鏆傛棤鍘嗗彶璁板綍</div>
+      <div v-if="historyList.length === 0" class="history-empty">暂无历史记录</div>
       <button
         v-for="item in historyList"
         :key="item.sessionId"
@@ -390,7 +414,7 @@ function clearMessages() {
         @click="loadHistorySession(item.sessionId)"
       >
         <span class="history-title">{{ item.title }}</span>
-        <span class="history-meta">{{ item.messageCount }} 鏉℃秷鎭?路 {{ new Date(item.updatedAt).toLocaleString() }}</span>
+        <span class="history-meta">{{ item.messageCount }} 条消息 · {{ new Date(item.updatedAt).toLocaleString() }}</span>
       </button>
     </div>
 
@@ -398,27 +422,27 @@ function clearMessages() {
       <label class="field-label">Base URL</label>
       <input v-model="draftSettings.baseUrl" class="field-input" placeholder="https://api.openai.com/v1" />
 
-      <label class="field-label">妯″瀷鍚?/label>
+      <label class="field-label">模型名</label>
       <input v-model="draftSettings.model" class="field-input" placeholder="gpt-4o-mini" />
 
       <label class="field-label">API Key</label>
       <input v-model="draftSettings.apiKey" class="field-input" type="password" placeholder="sk-..." />
 
-      <label class="field-label">绯荤粺鎻愮ず璇?/label>
+      <label class="field-label">系统提示词</label>
       <textarea v-model="draftSettings.systemPrompt" class="field-textarea" rows="3" />
 
       <div class="temperature-row">
-        <label class="field-label">娓╁害 {{ Number(draftSettings.temperature).toFixed(1) }}</label>
+        <label class="field-label">温度 {{ Number(draftSettings.temperature).toFixed(1) }}</label>
         <input v-model.number="draftSettings.temperature" type="range" min="0" max="2" step="0.1" />
       </div>
 
-      <button class="primary-btn" @click="saveSettings">淇濆瓨璁剧疆</button>
+      <button class="primary-btn" @click="saveSettings">保存设置</button>
     </div>
 
     <div class="chat-list">
       <div v-if="messages.length === 0" class="empty-state">
-        <div class="empty-title">鍙互闂垜鍛戒护銆佹姤閿欏拰鎺掗殰鎬濊矾</div>
-        <div class="empty-text">鍏堝湪璁剧疆閲屽～濂?URL銆佹ā鍨嬪悕鍜?API Key銆?/div>
+        <div class="empty-title">可以问我命令、报错和排障思路</div>
+        <div class="empty-text">先在设置里填好 URL、模型名和 API Key。</div>
       </div>
       <div
         v-for="message in messages"
@@ -426,9 +450,9 @@ function clearMessages() {
         class="chat-message"
         :class="[message.role, { error: message.error }]"
       >
-        <div class="message-role">{{ message.role === 'user' ? '浣? : 'AI' }}</div>
+        <div class="message-role">{{ message.role === 'user' ? '你' : 'AI' }}</div>
         <details v-if="message.reasoningContent" class="reasoning-box">
-          <summary>鎬濊€冨唴瀹?/summary>
+          <summary>思考内容</summary>
           <div class="reasoning-content">
             <template v-for="(block, index) in parseMarkdown(message.reasoningContent)" :key="index">
               <pre v-if="block.type === 'code'" class="markdown-code"><code>{{ block.content }}</code></pre>
@@ -443,7 +467,7 @@ function clearMessages() {
               <div v-else class="markdown-block" v-html="block.content"></div>
             </template>
           </template>
-          <span v-else>鎬濊€冧腑...</span>
+          <span v-else>思考中...</span>
         </div>
         <div v-if="formatUsage(message.usage)" class="usage-line">
           Token: {{ formatUsage(message.usage) }}
@@ -456,14 +480,14 @@ function clearMessages() {
         v-model="input"
         class="composer-input"
         rows="3"
-        placeholder="杈撳叆闂..."
+        placeholder="输入问题..."
         @keydown.enter.exact.prevent="sendMessage"
         @keydown.shift.enter.stop
         @keydown.ctrl.enter.prevent="sendMessage"
         @keydown.meta.enter.prevent="sendMessage"
       />
       <div class="composer-actions">
-        <button type="button" class="ghost-btn" @click="clearMessages" title="娓呯┖瀵硅瘽">
+        <button type="button" class="ghost-btn" @click="clearMessages" title="清空对话">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/>
           </svg>

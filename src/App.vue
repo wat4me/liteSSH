@@ -43,7 +43,7 @@ const aiSidebarVisible = ref(false)
 const sidebarWidth = ref(260)
 const sidebarSessionId = ref<string | null>(null)
 const sidebarGroupId = ref<string | null>(null)
-const aiSelectionRequest = ref<{ id: number; text: string; mode: 'send' | 'insert' } | null>(null)
+const aiSelectionRequest = ref<{ id: number; sessionId: string; text: string; mode: 'send' | 'insert' } | null>(null)
 const connectionsViewRef = ref<InstanceType<typeof ConnectionsView> | null>(null)
 const fileSidebarRef = ref<InstanceType<typeof FileSidebar> | null>(null)
 const latencyMap = ref<Record<string, number>>({})
@@ -445,13 +445,21 @@ function toggleAiSidebar() {
 }
 
 function handleAiSelection(text: string, mode: 'send' | 'insert') {
+  if (!activeSession.value) return
   aiSelectionRequest.value = {
     id: Date.now(),
+    sessionId: activeSession.value.id,
     text,
     mode,
   }
   aiSidebarVisible.value = true
   sidebarVisible.value = false
+}
+
+function handleAiSelectionConsumed(id: number) {
+  if (aiSelectionRequest.value?.id === id) {
+    aiSelectionRequest.value = null
+  }
 }
 
 function toggleMonitor() {
@@ -539,22 +547,24 @@ function onPwdOutput(sessionId: string, pwd: string) {
           </button>
         </div>
 
-        <template v-if="aiSidebarVisible && activeSession">
-          <div class="sidebar-panel" :style="{ width: sidebarWidth + 'px' }">
+        <template v-if="activeSession">
+          <div v-show="aiSidebarVisible" class="sidebar-panel" :style="{ width: sidebarWidth + 'px' }">
             <AiSidebar
               :key="activeSession.id"
               :session-id="activeSession.id"
               :selection-request="aiSelectionRequest"
               @close="aiSidebarVisible = false"
+              @selection-consumed="handleAiSelectionConsumed"
             />
           </div>
           <div
+            v-show="aiSidebarVisible"
             class="resize-handle"
             @mousedown="startResize"
           ></div>
         </template>
 
-        <template v-else-if="sidebarVisible && sidebarSessionId">
+        <template v-if="!aiSidebarVisible && sidebarVisible && sidebarSessionId">
           <div class="sidebar-panel" :style="{ width: sidebarWidth + 'px' }">
             <FileSidebar
               ref="fileSidebarRef"
