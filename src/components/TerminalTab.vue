@@ -19,6 +19,7 @@ const emit = defineEmits<{
   (e: 'pwdOutput', sessionId: string, pwd: string): void
   (e: 'reconnect', connectionId: string): void
   (e: 'latency', sessionId: string, ms: number): void
+  (e: 'aiSelection', text: string, mode: 'send' | 'insert'): void
 }>()
 
 const terminalRef = ref<HTMLDivElement>()
@@ -31,6 +32,10 @@ const disconnected = ref(false)
 const fontSize = ref(14)
 const searchVisible = ref(false)
 const searchQuery = ref('')
+const selectionMenuVisible = ref(false)
+const selectionMenuX = ref(0)
+const selectionMenuY = ref(0)
+const selectedText = ref('')
 let searchInputRef: HTMLInputElement | null = null
 let unsubData: (() => void) | null = null
 let unsubClosed: (() => void) | null = null
@@ -263,6 +268,29 @@ function onRequestTerminalPwd(event: Event) {
   if (!detail || detail.sessionId !== props.sessionId) return
   detail.handled = true
   requestInteractivePwd().then(detail.resolve, detail.reject)
+}
+
+function hideSelectionMenu() {
+  selectionMenuVisible.value = false
+}
+
+function openSelectionMenu(event: MouseEvent) {
+  if (!terminal || !terminal.hasSelection()) return
+  const text = terminal.getSelection().trim()
+  if (!text) return
+  event.preventDefault()
+  event.stopPropagation()
+  selectedText.value = text
+  selectionMenuX.value = event.clientX
+  selectionMenuY.value = event.clientY
+  selectionMenuVisible.value = true
+}
+
+function sendSelectionToAi(mode: 'send' | 'insert') {
+  const text = selectedText.value || terminal?.getSelection()?.trim() || ''
+  if (!text) return
+  emit('aiSelection', text, mode)
+  hideSelectionMenu()
 }
 
 function isLocallyEchoable(data: string): boolean {
@@ -793,6 +821,7 @@ unsubClosed = window.liteSSH.onSshClosed(props.sessionId, () => {
   })
 
   window.addEventListener('request-terminal-pwd', onRequestTerminalPwd)
+  window.addEventListener('click', hideSelectionMenu)
 
   await nextTick()
   attachResizeObserver()
@@ -807,6 +836,7 @@ watch([theme, customColors], () => {
 
 onBeforeUnmount(() => {
   window.removeEventListener('request-terminal-pwd', onRequestTerminalPwd)
+  window.removeEventListener('click', hideSelectionMenu)
   if (pwdQuery) {
     const query = pwdQuery
     clearPwdQuery()
@@ -850,7 +880,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="terminal-wrapper">
+  <div class="terminal-wrapper" @contextmenu="openSelectionMenu">
     <div v-if="searchVisible" class="search-bar">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
         <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
@@ -871,6 +901,25 @@ onBeforeUnmount(() => {
       </button>
     </div>
     <div ref="terminalRef" class="xterm-container"></div>
+    <div
+      v-if="selectionMenuVisible"
+      class="terminal-selection-menu"
+      :style="{ left: selectionMenuX + 'px', top: selectionMenuY + 'px' }"
+      @click.stop
+    >
+      <button class="terminal-selection-menu-item" @click="sendSelectionToAi('send')">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M22 2L11 13"/><path d="M22 2l-7 20-4-9-9-4 20-7z"/>
+        </svg>
+        <span>发送给 AI</span>
+      </button>
+      <button class="terminal-selection-menu-item" @click="sendSelectionToAi('insert')">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/>
+        </svg>
+        <span>放入 AI 输入框</span>
+      </button>
+    </div>
     <div v-if="disconnected" class="reconnect-overlay">
       <div class="reconnect-card">
         <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -954,6 +1003,37 @@ onBeforeUnmount(() => {
   width: 100%;
   height: 100%;
   padding: 4px;
+}
+
+.terminal-selection-menu {
+  position: fixed;
+  z-index: 10000;
+  min-width: 150px;
+  padding: 4px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+}
+
+.terminal-selection-menu-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 9px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 12px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.terminal-selection-menu-item:hover {
+  background: var(--accent-bg);
+  color: var(--accent);
 }
 
 .reconnect-overlay {

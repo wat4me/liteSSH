@@ -7,6 +7,7 @@ import SubTabBar from './components/SubTabBar.vue'
 import TerminalTab from './components/TerminalTab.vue'
 import FileSidebar from './components/FileSidebar.vue'
 import MonitorPanel from './components/MonitorPanel.vue'
+import AiSidebar from './components/AiSidebar.vue'
 import { useTheme } from './composables/useTheme'
 import { useTerminalPwd } from './composables/useTerminalPwd'
 import type { Connection } from './env.d.ts'
@@ -38,9 +39,11 @@ const recentConnections = ref<Connection[]>([])
 const groups = ref<ConnectionGroup[]>([])
 const activeGroupId = ref<string>(HOME_ID)
 const sidebarVisible = ref(false)
+const aiSidebarVisible = ref(false)
 const sidebarWidth = ref(260)
 const sidebarSessionId = ref<string | null>(null)
 const sidebarGroupId = ref<string | null>(null)
+const aiSelectionRequest = ref<{ id: number; text: string; mode: 'send' | 'insert' } | null>(null)
 const connectionsViewRef = ref<InstanceType<typeof ConnectionsView> | null>(null)
 const fileSidebarRef = ref<InstanceType<typeof FileSidebar> | null>(null)
 const latencyMap = ref<Record<string, number>>({})
@@ -157,6 +160,7 @@ function syncSidebarState() {
   if (groups.value.length === 0) {
     setSidebarTarget(null, null)
     sidebarVisible.value = false
+    aiSidebarVisible.value = false
     return
   }
 
@@ -310,6 +314,7 @@ async function createSession(connectionId: string) {
 
     activeGroupId.value = connectionId
     setSidebarTarget(connectionId, sessionId)
+    aiSidebarVisible.value = false
     sidebarVisible.value = true
     await window.liteSSH.recordRecentConnection(connectionId)
     await loadRecentConnections()
@@ -431,6 +436,22 @@ function onSessionClosed(sessionId: string) {
 
 function toggleSidebar() {
   sidebarVisible.value = !sidebarVisible.value
+  if (sidebarVisible.value) aiSidebarVisible.value = false
+}
+
+function toggleAiSidebar() {
+  aiSidebarVisible.value = !aiSidebarVisible.value
+  if (aiSidebarVisible.value) sidebarVisible.value = false
+}
+
+function handleAiSelection(text: string, mode: 'send' | 'insert') {
+  aiSelectionRequest.value = {
+    id: Date.now(),
+    text,
+    mode,
+  }
+  aiSidebarVisible.value = true
+  sidebarVisible.value = false
 }
 
 function toggleMonitor() {
@@ -486,6 +507,16 @@ function onPwdOutput(sessionId: string, pwd: string) {
         <div class="left-toolbar">
           <button
             class="toolbar-icon-btn"
+            :class="{ active: aiSidebarVisible }"
+            @click="toggleAiSidebar"
+            title="AI 助手"
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 2l1.4 5.1L18 4.4l-2.7 4.7L20 10.5l-5 1.5 3.5 4-4.8-1.9L12 22l-1.7-7.9L5.5 16 9 12 4 10.5l4.7-1.4L6 4.4l4.6 2.7L12 2z"/>
+            </svg>
+          </button>
+          <button
+            class="toolbar-icon-btn"
             :class="{ active: sidebarVisible }"
             @click="toggleSidebar"
             title="SFTP 文件浏览"
@@ -508,7 +539,22 @@ function onPwdOutput(sessionId: string, pwd: string) {
           </button>
         </div>
 
-        <template v-if="sidebarVisible && sidebarSessionId">
+        <template v-if="aiSidebarVisible && activeSession">
+          <div class="sidebar-panel" :style="{ width: sidebarWidth + 'px' }">
+            <AiSidebar
+              :key="activeSession.id"
+              :session-id="activeSession.id"
+              :selection-request="aiSelectionRequest"
+              @close="aiSidebarVisible = false"
+            />
+          </div>
+          <div
+            class="resize-handle"
+            @mousedown="startResize"
+          ></div>
+        </template>
+
+        <template v-else-if="sidebarVisible && sidebarSessionId">
           <div class="sidebar-panel" :style="{ width: sidebarWidth + 'px' }">
             <FileSidebar
               ref="fileSidebarRef"
@@ -546,6 +592,7 @@ function onPwdOutput(sessionId: string, pwd: string) {
                 @pwd-output="onPwdOutput"
                 @reconnect="createSession"
                 @latency="onLatency"
+                @ai-selection="handleAiSelection"
               />
             </KeepAlive>
           </div>

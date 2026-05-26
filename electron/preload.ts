@@ -24,6 +24,20 @@ contextBridge.exposeInMainWorld('liteSSH', {
   setTerminalFontSize: (size: number) => ipcRenderer.invoke('settings:setTerminalFontSize', size),
   getRecentDownloadPaths: () => ipcRenderer.invoke('settings:getRecentDownloadPaths'),
   addRecentDownloadPath: (dirPath: string) => ipcRenderer.invoke('settings:addRecentDownloadPath', dirPath),
+  getAiSettings: () => ipcRenderer.invoke('settings:getAiSettings'),
+  setAiSettings: (settings: any) => ipcRenderer.invoke('settings:setAiSettings', settings),
+  aiChat: (messages: any[]) => ipcRenderer.invoke('ai:chat', messages),
+  aiChatStream: (requestId: string, messages: any[]) => ipcRenderer.invoke('ai:chatStream', requestId, messages),
+  getAiSessionHistory: (sessionId: string) => ipcRenderer.invoke('ai:getSessionHistory', sessionId),
+  listAiSessionHistories: () => ipcRenderer.invoke('ai:listSessionHistories'),
+  appendAiSessionHistory: (sessionId: string, record: any) => ipcRenderer.invoke('ai:appendSessionHistory', sessionId, record),
+  clearAiSessionHistory: (sessionId: string) => ipcRenderer.invoke('ai:clearSessionHistory', sessionId),
+  onAiChatStream: (requestId: string, callback: (payload: any) => void) => {
+    const channel = `ai:chatStream:${requestId}`
+    const listener = (_event: any, payload: any) => callback(payload)
+    ipcRenderer.on(channel, listener)
+    return () => ipcRenderer.removeListener(channel, listener)
+  },
 
   getLatencyEnabled: () => ipcRenderer.invoke('settings:getLatencyEnabled'),
   setLatencyEnabled: (enabled: boolean) => ipcRenderer.invoke('settings:setLatencyEnabled', enabled),
@@ -38,8 +52,8 @@ contextBridge.exposeInMainWorld('liteSSH', {
   sshWrite: (sessionId: string, data: string) => ipcRenderer.send('ssh:write', sessionId, data),
   sshResize: (sessionId: string, cols: number, rows: number) => ipcRenderer.send('ssh:resize', sessionId, cols, rows),
   sshTestConnection: (connectionId: string) => ipcRenderer.invoke('ssh:testConnection', connectionId),
-  sshTestConnectionParams: (params: { host: string; port: number; username: string; password: string }) => ipcRenderer.invoke('ssh:testConnectionParams', params),
-  sshDiagnoseConnectionParams: (params: { host: string; port: number; username: string; password: string }) =>
+  sshTestConnectionParams: (params: { host: string; port: number; username: string; password: string; privateKey?: string }) => ipcRenderer.invoke('ssh:testConnectionParams', params),
+  sshDiagnoseConnectionParams: (params: { host: string; port: number; username: string; password: string; privateKey?: string }) =>
     ipcRenderer.invoke('ssh:diagnoseConnectionParams', params),
 
   sshStartLatencyMonitor: (sessionId: string) => ipcRenderer.invoke('ssh:startLatencyMonitor', sessionId),

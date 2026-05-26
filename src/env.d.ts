@@ -26,6 +26,15 @@ declare global {
       setTerminalFontSize: (size: number) => Promise<void>
       getRecentDownloadPaths: () => Promise<string[]>
       addRecentDownloadPath: (dirPath: string) => Promise<void>
+      getAiSettings: () => Promise<AiSettings>
+      setAiSettings: (settings: AiSettings) => Promise<void>
+      aiChat: (messages: AiChatMessage[]) => Promise<AiChatResult>
+      aiChatStream: (requestId: string, messages: AiChatMessage[]) => Promise<AiChatResult>
+      getAiSessionHistory: (sessionId: string) => Promise<AiHistoryRecord[]>
+      listAiSessionHistories: () => Promise<AiHistorySummary[]>
+      appendAiSessionHistory: (sessionId: string, record: AiHistoryRecord) => Promise<void>
+      clearAiSessionHistory: (sessionId: string) => Promise<void>
+      onAiChatStream: (requestId: string, callback: (payload: AiChatStreamPayload) => void) => () => void
 
       getLatencyEnabled: () => Promise<boolean>
       setLatencyEnabled: (enabled: boolean) => Promise<void>
@@ -40,12 +49,13 @@ declare global {
       sshWrite: (sessionId: string, data: string) => void
       sshResize: (sessionId: string, cols: number, rows: number) => void
       sshTestConnection: (connectionId: string) => Promise<{ ok: boolean; latency?: number; error?: string }>
-      sshTestConnectionParams: (params: { host: string; port: number; username: string; password: string }) => Promise<{ ok: boolean; latency?: number; error?: string }>
+      sshTestConnectionParams: (params: { host: string; port: number; username: string; password: string; privateKey?: string }) => Promise<{ ok: boolean; latency?: number; error?: string }>
       sshDiagnoseConnectionParams: (params: {
         host: string
         port: number
         username: string
         password: string
+        privateKey?: string
       }) => Promise<{
         ok: boolean
         tcpLatency?: number
@@ -156,6 +166,55 @@ export interface TransferItem {
   direction: 'download' | 'upload'
   error?: string
 }
+
+export interface AiSettings {
+  baseUrl: string
+  model: string
+  apiKey: string
+  systemPrompt: string
+  temperature: number
+}
+
+export interface AiChatMessage {
+  role: 'user' | 'assistant' | 'system'
+  content: string
+}
+
+export interface AiUsage {
+  promptTokens?: number
+  completionTokens?: number
+  totalTokens?: number
+  reasoningTokens?: number
+}
+
+export interface AiChatResult {
+  content: string
+  reasoningContent?: string
+  usage?: AiUsage
+}
+
+export interface AiHistoryRecord {
+  id: string
+  role: 'user' | 'assistant'
+  content: string
+  reasoningContent?: string
+  usage?: AiUsage
+  error?: boolean
+  createdAt: number
+}
+
+export interface AiHistorySummary {
+  sessionId: string
+  title: string
+  messageCount: number
+  updatedAt: number
+}
+
+export type AiChatStreamPayload =
+  | { type: 'content'; value: string }
+  | { type: 'reasoning'; value: string }
+  | { type: 'usage'; value: AiUsage }
+  | { type: 'done' }
 
 export interface UpdateStatus {
   status: 'checking' | 'available' | 'not-available' | 'downloading' | 'downloaded' | 'error'

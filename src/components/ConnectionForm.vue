@@ -171,6 +171,7 @@ async function handleTest() {
       port: form.value.port,
       username: form.value.username.trim(),
       password: form.value.password,
+      privateKey: authType.value === 'key' ? form.value.privateKey.trim() || undefined : undefined,
     })
     if (result.ok) {
       testState.value = 'success'
@@ -209,6 +210,7 @@ async function handleDiagnose() {
       port: form.value.port,
       username: form.value.username.trim(),
       password: form.value.password,
+      privateKey: authType.value === 'key' ? form.value.privateKey.trim() || undefined : undefined,
     })
     diagnoseResult.value = result
     diagnoseState.value = result.ok ? 'success' : 'error'

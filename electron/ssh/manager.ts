@@ -86,7 +86,12 @@ export class SSHManager {
         host: connection.host,
         port: connection.port,
         username: connection.username,
-        ...(connection.privateKey ? { privateKey: Buffer.from(connection.privateKey) } : { password: connection.password }),
+        ...(connection.privateKey
+          ? {
+              privateKey: Buffer.from(connection.privateKey),
+              ...(connection.password ? { passphrase: connection.password } : {}),
+            }
+          : { password: connection.password }),
         readyTimeout: 15000,
         keepaliveInterval: connection.keepaliveInterval ?? 30000,
       }

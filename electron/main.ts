@@ -1,7 +1,8 @@
 import { app, BrowserWindow, ipcMain, Menu, dialog, shell, clipboard, safeStorage } from 'electron'
 import { join } from 'path'
-import { Client } from 'ssh2'
+import { Client, ConnectConfig } from 'ssh2'
 import { existsSync } from 'fs'
+import { appendFile, mkdir, readFile, readdir, stat, writeFile } from 'fs/promises'
 import { Socket } from 'net'
 import { autoUpdater } from 'electron-updater'
 import { CredentialStore } from './store/credentialStore'
@@ -65,7 +66,31 @@ function validateConnectionParams(params: any): { valid: boolean; error?: string
   if (!isValidPort(params.port)) return { valid: false, error: 'Invalid port' }
   if (!isValidUsername(params.username)) return { valid: false, error: 'Invalid username' }
   if (typeof params.password !== 'string') return { valid: false, error: 'Invalid password' }
+  if (params.privateKey !== undefined && typeof params.privateKey !== 'string') return { valid: false, error: 'Invalid private key' }
   return { valid: true }
+}
+
+type AuthConnectionParams = {
+  host: string
+  port: number
+  username: string
+  password: string
+  privateKey?: string
+}
+
+function buildSshConnectConfig(params: AuthConnectionParams, readyTimeout: number): ConnectConfig {
+  return {
+    host: params.host,
+    port: params.port,
+    username: params.username,
+    ...(params.privateKey
+      ? {
+          privateKey: Buffer.from(params.privateKey),
+          ...(params.password ? { passphrase: params.password } : {}),
+        }
+      : { password: params.password }),
+    readyTimeout,
+  }
 }
 
 const dataBatches: Map<string, string> = new Map()
@@ -103,6 +128,232 @@ type SshDiagnosisResult = {
   error?: string
 }
 
+type AiChatMessage = {
+  role: 'system' | 'user' | 'assistant'
+  content: string
+}
+
+function normalizeAiBaseUrl(baseUrl: string): string {
+  if (typeof baseUrl !== 'string' || !baseUrl.trim()) {
+    throw new Error('Invalid AI base URL')
+  }
+
+  let parsed: URL
+  try {
+    parsed = new URL(baseUrl.trim())
+  } catch {
+    throw new Error('Invalid AI base URL')
+  }
+
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    throw new Error('AI base URL must use http or https')
+  }
+
+  return parsed.toString().replace(/\/$/, '')
+}
+
+function getAiChatCompletionsUrl(baseUrl: string): string {
+  const normalized = normalizeAiBaseUrl(baseUrl)
+  if (normalized.endsWith('/chat/completions')) return normalized
+  return `${normalized}/chat/completions`
+}
+
+function validateAiSettings(settings: any): {
+  baseUrl: string
+  model: string
+  apiKey: string
+  systemPrompt: string
+  temperature: number
+} {
+  if (!settings || typeof settings !== 'object') {
+    throw new Error('Invalid AI settings')
+  }
+  const baseUrl = normalizeAiBaseUrl(settings.baseUrl)
+  const model = typeof settings.model === 'string' ? settings.model.trim() : ''
+  if (!model) throw new Error('Invalid AI model')
+
+  return {
+    baseUrl,
+    model,
+    apiKey: typeof settings.apiKey === 'string' ? settings.apiKey : '',
+    systemPrompt: typeof settings.systemPrompt === 'string' ? settings.systemPrompt : '',
+    temperature: typeof settings.temperature === 'number'
+      ? Math.max(0, Math.min(2, settings.temperature))
+      : 0.2,
+  }
+}
+
+function validateAiMessages(messages: any): AiChatMessage[] {
+  if (!Array.isArray(messages)) throw new Error('Invalid AI messages')
+  const validRoles = new Set(['system', 'user', 'assistant'])
+  return messages.slice(-20).map((message) => {
+    if (!message || typeof message !== 'object') throw new Error('Invalid AI message')
+    if (!validRoles.has(message.role)) throw new Error('Invalid AI message role')
+    if (typeof message.content !== 'string' || !message.content.trim()) {
+      throw new Error('Invalid AI message content')
+    }
+    return {
+      role: message.role,
+      content: message.content.slice(0, 12000),
+    }
+  })
+}
+
+function getFirstString(...values: any[]): string {
+  for (const value of values) {
+    if (typeof value === 'string' && value.trim()) return value
+  }
+  return ''
+}
+
+function normalizeAiContent(content: any): string {
+  if (typeof content === 'string') return content
+  if (!Array.isArray(content)) return ''
+  return content
+    .map((part) => {
+      if (typeof part === 'string') return part
+      if (part && typeof part === 'object') {
+        return getFirstString(part.text, part.content)
+      }
+      return ''
+    })
+    .filter(Boolean)
+    .join('\n')
+}
+
+function extractAiUsage(usage: any): {
+  promptTokens?: number
+  completionTokens?: number
+  totalTokens?: number
+  reasoningTokens?: number
+} | undefined {
+  if (!usage || typeof usage !== 'object') return undefined
+  const result = {
+    promptTokens: typeof usage.prompt_tokens === 'number' ? usage.prompt_tokens : undefined,
+    completionTokens: typeof usage.completion_tokens === 'number' ? usage.completion_tokens : undefined,
+    totalTokens: typeof usage.total_tokens === 'number' ? usage.total_tokens : undefined,
+    reasoningTokens: typeof usage.completion_tokens_details?.reasoning_tokens === 'number'
+      ? usage.completion_tokens_details.reasoning_tokens
+      : typeof usage.reasoning_tokens === 'number'
+        ? usage.reasoning_tokens
+        : undefined,
+  }
+  if (Object.values(result).every((value) => value === undefined)) return undefined
+  return result
+}
+
+type AiHistoryRecord = {
+  id: string
+  role: 'user' | 'assistant'
+  content: string
+  reasoningContent?: string
+  usage?: ReturnType<typeof extractAiUsage>
+  error?: boolean
+  createdAt: number
+}
+
+function getAiHistoryPath(sessionId: string): string {
+  if (!sessionId || typeof sessionId !== 'string') {
+    throw new Error('Invalid AI session id')
+  }
+  const safeId = encodeURIComponent(sessionId).replace(/[()]/g, '')
+  return join(app.getPath('userData'), 'ai-history', `${safeId}.jsonl`)
+}
+
+function getAiHistoryDir(): string {
+  return join(app.getPath('userData'), 'ai-history')
+}
+
+async function readAiHistoryRecords(sessionId: string): Promise<AiHistoryRecord[]> {
+  const historyPath = getAiHistoryPath(sessionId)
+  if (!existsSync(historyPath)) return []
+  const data = await readFile(historyPath, 'utf-8')
+  return data
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      try {
+        return normalizeAiHistoryRecord(JSON.parse(line))
+      } catch {
+        return null
+      }
+    })
+    .filter((record): record is AiHistoryRecord => Boolean(record))
+}
+
+function normalizeAiHistoryRecord(record: any): AiHistoryRecord {
+  if (!record || typeof record !== 'object') {
+    throw new Error('Invalid AI history record')
+  }
+  if (record.role !== 'user' && record.role !== 'assistant') {
+    throw new Error('Invalid AI history role')
+  }
+  if (typeof record.content !== 'string') {
+    throw new Error('Invalid AI history content')
+  }
+  return {
+    id: typeof record.id === 'string' && record.id ? record.id : `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    role: record.role,
+    content: record.content.slice(0, 200000),
+    reasoningContent: typeof record.reasoningContent === 'string' ? record.reasoningContent.slice(0, 200000) : undefined,
+    usage: extractAiUsage({
+      prompt_tokens: record.usage?.promptTokens,
+      completion_tokens: record.usage?.completionTokens,
+      total_tokens: record.usage?.totalTokens,
+      reasoning_tokens: record.usage?.reasoningTokens,
+    }),
+    error: record.error === true,
+    createdAt: typeof record.createdAt === 'number' ? record.createdAt : Date.now(),
+  }
+}
+
+function extractAiReasoningFromMessage(message: any): string {
+  return getFirstString(
+    message?.reasoning_content,
+    message?.reasoning,
+    message?.thinking
+  )
+}
+
+function extractAiReasoningFromChoice(choice: any): string {
+  return getFirstString(
+    extractAiReasoningFromMessage(choice?.delta),
+    extractAiReasoningFromMessage(choice?.message),
+    choice?.reasoning_content,
+    choice?.reasoning,
+    choice?.thinking
+  )
+}
+
+async function readAiStream(response: Response, onEvent: (event: any) => void): Promise<void> {
+  if (!response.body) throw new Error('AI response did not contain a stream')
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+
+  while (true) {
+    const { value, done } = await reader.read()
+    if (done) break
+    buffer += decoder.decode(value, { stream: true })
+    const events = buffer.split(/\r?\n\r?\n/)
+    buffer = events.pop() || ''
+
+    for (const event of events) {
+      const dataLines = event
+        .split(/\r?\n/)
+        .filter((line) => line.startsWith('data:'))
+        .map((line) => line.slice(5).trim())
+      if (dataLines.length === 0) continue
+      const payload = dataLines.join('\n')
+      if (payload === '[DONE]') return
+      try {
+        onEvent(JSON.parse(payload))
+      } catch {}
+    }
+  }
+}
+
 function testTcpLatency(host: string, port: number, timeoutMs: number): Promise<number> {
   return new Promise((resolve, reject) => {
     const start = Date.now()
@@ -137,6 +388,7 @@ async function diagnoseSshConnection(params: {
   port: number
   username: string
   password: string
+  privateKey?: string
 }): Promise<SshDiagnosisResult> {
   const totalStart = Date.now()
   let tcpLatency: number | undefined
@@ -251,13 +503,7 @@ async function diagnoseSshConnection(params: {
       })
     })
 
-    client.connect({
-      host: params.host,
-      port: params.port,
-      username: params.username,
-      password: params.password,
-      readyTimeout: SSH_DIAG_TIMEOUT_MS,
-    })
+    client.connect(buildSshConnectConfig(params, SSH_DIAG_TIMEOUT_MS))
   })
 }
 
@@ -561,10 +807,6 @@ ipcMain.handle('dialog:readPrivateKey', async () => {
   const result = await dialog.showOpenDialog(mainWindow, {
     properties: ['openFile'],
     title: '选择私钥文件',
-    filters: [
-      { name: '私钥文件', extensions: ['pem', 'key', 'id_rsa', 'id_ed25519', 'id_ecdsa'] },
-      { name: '所有文件', extensions: ['*'] },
-    ],
   })
   if (result.canceled || result.filePaths.length === 0) return null
   try {
@@ -596,6 +838,194 @@ ipcMain.handle('settings:addRecentDownloadPath', async (_event, dirPath: string)
     throw new Error('Invalid directory path')
   }
   await settingsStore.addRecentDownloadPath(dirPath)
+})
+
+ipcMain.handle('settings:getAiSettings', () => {
+  return settingsStore.getAiSettings()
+})
+
+ipcMain.handle('settings:setAiSettings', async (_event, settings: any) => {
+  await settingsStore.setAiSettings(validateAiSettings(settings))
+})
+
+ipcMain.handle('ai:getSessionHistory', async (_event, sessionId: string) => {
+  return await readAiHistoryRecords(sessionId)
+})
+
+ipcMain.handle('ai:listSessionHistories', async () => {
+  const historyDir = getAiHistoryDir()
+  if (!existsSync(historyDir)) return []
+  const files = await readdir(historyDir)
+  const histories = await Promise.all(files
+    .filter((fileName) => fileName.endsWith('.jsonl'))
+    .map(async (fileName) => {
+      const sessionId = decodeURIComponent(fileName.replace(/\.jsonl$/, ''))
+      const historyPath = join(historyDir, fileName)
+      const [records, fileStat] = await Promise.all([
+        readAiHistoryRecords(sessionId),
+        stat(historyPath),
+      ])
+      const firstUser = records.find((record) => record.role === 'user')
+      return {
+        sessionId,
+        title: firstUser?.content.slice(0, 60) || sessionId,
+        messageCount: records.length,
+        updatedAt: fileStat.mtimeMs,
+      }
+    }))
+  return histories
+    .filter((item) => item.messageCount > 0)
+    .sort((a, b) => b.updatedAt - a.updatedAt)
+    .slice(0, 50)
+})
+
+ipcMain.handle('ai:appendSessionHistory', async (_event, sessionId: string, record: any) => {
+  const historyPath = getAiHistoryPath(sessionId)
+  await mkdir(getAiHistoryDir(), { recursive: true })
+  await appendFile(historyPath, `${JSON.stringify(normalizeAiHistoryRecord(record))}\n`, 'utf-8')
+})
+
+ipcMain.handle('ai:clearSessionHistory', async (_event, sessionId: string) => {
+  const historyPath = getAiHistoryPath(sessionId)
+  await mkdir(getAiHistoryDir(), { recursive: true })
+  await writeFile(historyPath, '', 'utf-8')
+})
+
+ipcMain.handle('ai:chat', async (_event, messages: any) => {
+  const settings = settingsStore.getAiSettings()
+  const chatMessages = validateAiMessages(messages)
+  if (!settings.apiKey.trim()) {
+    throw new Error('Please configure an AI API key first')
+  }
+
+  const response = await fetch(getAiChatCompletionsUrl(settings.baseUrl), {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${settings.apiKey}`,
+    },
+    body: JSON.stringify({
+      model: settings.model,
+      messages: [
+        ...(settings.systemPrompt.trim() ? [{ role: 'system', content: settings.systemPrompt.trim() }] : []),
+        ...chatMessages.filter((message) => message.role !== 'system'),
+      ],
+      temperature: settings.temperature,
+    }),
+  })
+
+  if (!response.ok) {
+    let message = `AI request failed (${response.status})`
+    try {
+      const data = await response.json()
+      message = data?.error?.message || data?.message || message
+    } catch {}
+    throw new Error(message)
+  }
+
+  const data = await response.json()
+  const choice = data?.choices?.[0]
+  const message = choice?.message || {}
+  const content = normalizeAiContent(message.content ?? choice?.text)
+  if (!content) {
+    throw new Error('AI response did not contain a message')
+  }
+  const reasoningContent = getFirstString(
+    message.reasoning_content,
+    message.reasoning,
+    message.thinking,
+    choice?.reasoning_content,
+    choice?.reasoning,
+    choice?.thinking,
+    data?.reasoning_content,
+    data?.reasoning
+  )
+  return {
+    content,
+    reasoningContent: reasoningContent || undefined,
+    usage: extractAiUsage(data?.usage),
+  }
+})
+
+ipcMain.handle('ai:chatStream', async (event, requestId: string, messages: any) => {
+  if (!requestId || typeof requestId !== 'string') {
+    throw new Error('Invalid AI request id')
+  }
+  const settings = settingsStore.getAiSettings()
+  const chatMessages = validateAiMessages(messages)
+  if (!settings.apiKey.trim()) {
+    throw new Error('Please configure an AI API key first')
+  }
+
+  const send = (payload: any) => {
+    event.sender.send(`ai:chatStream:${requestId}`, payload)
+  }
+
+  const createBody = (includeUsage: boolean) => ({
+      model: settings.model,
+      messages: [
+        ...(settings.systemPrompt.trim() ? [{ role: 'system', content: settings.systemPrompt.trim() }] : []),
+        ...chatMessages.filter((message) => message.role !== 'system'),
+      ],
+      temperature: settings.temperature,
+      stream: true,
+      ...(includeUsage ? { stream_options: { include_usage: true } } : {}),
+    })
+
+  const requestStream = (includeUsage: boolean) => fetch(getAiChatCompletionsUrl(settings.baseUrl), {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${settings.apiKey}`,
+    },
+    body: JSON.stringify(createBody(includeUsage)),
+  })
+
+  let response = await requestStream(true)
+  if (!response.ok) {
+    response = await requestStream(false)
+  }
+
+  if (!response.ok) {
+    let message = `AI request failed (${response.status})`
+    try {
+      const data = await response.json()
+      message = data?.error?.message || data?.message || message
+    } catch {}
+    throw new Error(message)
+  }
+
+  let content = ''
+  let reasoningContent = ''
+  let usage: ReturnType<typeof extractAiUsage> | undefined
+
+  await readAiStream(response, (chunk) => {
+    const choice = chunk?.choices?.[0]
+    const delta = choice?.delta || {}
+    const contentDelta = normalizeAiContent(delta.content ?? choice?.text)
+    const reasoningDelta = extractAiReasoningFromChoice(choice)
+    const chunkUsage = extractAiUsage(chunk?.usage)
+
+    if (reasoningDelta) {
+      reasoningContent += reasoningDelta
+      send({ type: 'reasoning', value: reasoningDelta })
+    }
+    if (contentDelta) {
+      content += contentDelta
+      send({ type: 'content', value: contentDelta })
+    }
+    if (chunkUsage) {
+      usage = chunkUsage
+      send({ type: 'usage', value: chunkUsage })
+    }
+  })
+
+  send({ type: 'done' })
+  return {
+    content,
+    reasoningContent: reasoningContent || undefined,
+    usage,
+  }
 })
 
 // Import/Export
@@ -689,17 +1119,11 @@ ipcMain.handle('ssh:testConnection', async (_event, connectionId: string) => {
     client.on('error', (err) => {
       resolve({ ok: false, error: err.message })
     })
-    client.connect({
-      host: connection.host,
-      port: connection.port,
-      username: connection.username,
-      password: connection.password,
-      readyTimeout: 10000,
-    })
+    client.connect(buildSshConnectConfig(connection, 10000))
   })
 })
 
-ipcMain.handle('ssh:testConnectionParams', async (_event, params: { host: string; port: number; username: string; password: string }) => {
+ipcMain.handle('ssh:testConnectionParams', async (_event, params: AuthConnectionParams) => {
   const validation = validateConnectionParams(params)
   if (!validation.valid) {
     throw new Error(validation.error)
@@ -716,17 +1140,11 @@ ipcMain.handle('ssh:testConnectionParams', async (_event, params: { host: string
     client.on('error', (err) => {
       resolve({ ok: false, error: err.message })
     })
-    client.connect({
-      host: params.host,
-      port: params.port,
-      username: params.username,
-      password: params.password,
-      readyTimeout: 10000,
-    })
+    client.connect(buildSshConnectConfig(params, 10000))
   })
 })
 
-ipcMain.handle('ssh:diagnoseConnectionParams', async (_event, params: { host: string; port: number; username: string; password: string }) => {
+ipcMain.handle('ssh:diagnoseConnectionParams', async (_event, params: AuthConnectionParams) => {
   const validation = validateConnectionParams(params)
   if (!validation.valid) {
     throw new Error(validation.error)
