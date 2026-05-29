@@ -200,10 +200,14 @@ function generateCopyName(originalName: string): string {
   return `${baseName} (${counter})`
 }
 
-function onCopyConnection(conn: Connection) {
+async function onCopyConnection(conn: Connection) {
+  const password = conn.id
+    ? await window.liteSSH.getConnectionPassword(conn.id)
+    : conn.password
   editingConnection.value = {
     ...conn,
     id: '',
+    password: password || conn.password,
     name: generateCopyName(conn.name),
     createdAt: 0,
     updatedAt: 0,

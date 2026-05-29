@@ -133,7 +133,7 @@ async function handleSave() {
       x11Host: form.value.x11Forwarding ? form.value.x11Host.trim() : undefined,
       x11Display: form.value.x11Forwarding ? form.value.x11Display : undefined,
     }
-    if (props.connection) {
+    if (props.connection?.id) {
       data.id = props.connection.id
     }
     const saved = await window.liteSSH.saveConnection(data)
