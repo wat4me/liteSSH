@@ -1,6 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onBeforeUnmount, watch, provide } from 'vue'
-import { ElMessage } from 'element-plus'
+import { onMounted, onBeforeUnmount, provide } from 'vue'
 import ConnectionsView from './views/ConnectionsView.vue'
 import TabBar from './components/TabBar.vue'
 import SubTabBar from './components/SubTabBar.vue'
@@ -10,229 +9,113 @@ import MonitorPanel from './components/MonitorPanel.vue'
 import AiSidebar from './components/AiSidebar.vue'
 import { useTheme } from './composables/useTheme'
 import { useTerminalPwd } from './composables/useTerminalPwd'
-import type { Connection } from './env.d.ts'
-import type { Theme } from './composables/useTheme'
-import type { CustomColors } from './composables/useTheme'
-
-const HOME_ID = '__home__'
-
-interface Session {
-  id: string
-  connectionId: string
-  connectionName: string
-  tabNumber: number
-}
-
-interface ConnectionGroup {
-  connectionId: string
-  connectionName: string
-  sessions: Session[]
-  activeSessionId: string | null
-  nextTabNumber: number
-}
+import { useSessionManager, HOME_ID } from './composables/useSessionManager'
+import { useSidebarState } from './composables/useSidebarState'
+import { useLatencyState } from './composables/useLatencyState'
+import { useAppKeyboard } from './composables/useAppKeyboard'
 
 const { theme, customColors } = useTheme()
 const pwdTracker = useTerminalPwd()
 
-const connections = ref<Connection[]>([])
-const recentConnections = ref<Connection[]>([])
-const groups = ref<ConnectionGroup[]>([])
-const activeGroupId = ref<string>(HOME_ID)
-const sidebarVisible = ref(false)
-const aiSidebarVisible = ref(false)
-const sidebarWidth = ref(260)
-const sidebarSessionId = ref<string | null>(null)
-const sidebarGroupId = ref<string | null>(null)
-const aiSelectionRequest = ref<{ id: number; sessionId: string; text: string; mode: 'send' | 'insert' } | null>(null)
-const connectionsViewRef = ref<InstanceType<typeof ConnectionsView> | null>(null)
-const fileSidebarRef = ref<InstanceType<typeof FileSidebar> | null>(null)
-const latencyMap = ref<Record<string, number>>({})
-const latencyEnabled = ref(true)
-const latencyIntervalMs = ref(10000)
+const session = useSessionManager({ pwdTracker })
 
-const monitorVisible = ref(false)
-const monitorWidth = ref(280)
-const monitorEnabled = ref(true)
-let resizing = false
-let resizeStartX = 0
-let resizeStartWidth = 0
-let resizingRight = false
-let resizeStartXRight = 0
-let resizeStartWidthRight = 0
+const {
+  groups,
+  recentConnections,
+  activeGroupId,
+  isHomeActive,
+  activeGroup,
+  activeSession,
+  activeSessionId,
+  onConnect,
+  onCloseGroup,
+  onSelectGroup,
+  onSelectHome,
+  onQuickConnect,
+  onSelectSession,
+  onCloseSession,
+  onSessionClosed,
+  createSession,
+  syncConnectionName,
+  getGroupBySessionId,
+  getGroupByConnectionId,
+  getLastSessionId,
+  connectSidebar,
+  loadConnections,
+  loadRecentConnections,
+} = session
 
-function onLatency(sessionId: string, ms: number) {
-  if (!latencyEnabled.value) return
-  const group = getGroupBySessionId(sessionId)
-  if (group) {
-    latencyMap.value = { ...latencyMap.value, [group.connectionId]: ms }
-  }
-}
-
-function onResizeMove(e: MouseEvent) {
-  if (resizing) {
-    const diff = e.clientX - resizeStartX
-    const newWidth = Math.max(180, Math.min(600, resizeStartWidth + diff))
-    sidebarWidth.value = newWidth
-  }
-  if (resizingRight) {
-    const diff = resizeStartXRight - e.clientX
-    const newWidth = Math.max(200, Math.min(500, resizeStartWidthRight + diff))
-    monitorWidth.value = newWidth
-  }
-}
-
-function onResizeUp() {
-  resizing = false
-  resizingRight = false
-  document.removeEventListener('mousemove', onResizeMove)
-  document.removeEventListener('mouseup', onResizeUp)
-  document.body.style.cursor = ''
-  document.body.style.userSelect = ''
-}
-
-function startResize(e: MouseEvent) {
-  resizing = true
-  resizeStartX = e.clientX
-  resizeStartWidth = sidebarWidth.value
-  document.addEventListener('mousemove', onResizeMove)
-  document.addEventListener('mouseup', onResizeUp)
-  document.body.style.cursor = 'col-resize'
-  document.body.style.userSelect = 'none'
-}
-
-function startResizeRight(e: MouseEvent) {
-  resizingRight = true
-  resizeStartXRight = e.clientX
-  resizeStartWidthRight = monitorWidth.value
-  document.addEventListener('mousemove', onResizeMove)
-  document.addEventListener('mouseup', onResizeUp)
-  document.body.style.cursor = 'col-resize'
-  document.body.style.userSelect = 'none'
-}
-
-onBeforeUnmount(() => {
-  document.removeEventListener('mousemove', onResizeMove)
-  document.removeEventListener('mouseup', onResizeUp)
+const sidebar = useSidebarState({
+  groups,
+  activeGroupId,
+  activeSessionId,
+  HOME_ID,
+  getGroupByConnectionId,
+  getLastSessionId,
 })
+
+const {
+  sidebarVisible,
+  aiSidebarVisible,
+  sidebarWidth,
+  monitorWidth,
+  monitorVisible,
+  monitorEnabled,
+  sidebarSessionId,
+  sidebarGroupId,
+  aiSelectionRequest,
+  connectionsViewRef,
+  fileSidebarRef,
+  toggleSidebar,
+  toggleAiSidebar,
+  toggleMonitor,
+  setSidebarTarget,
+  syncSidebarState,
+  startResize,
+  startResizeRight,
+  handleAiSelection,
+  handleAiSelectionConsumed,
+  handleMonitorSettingsChange,
+} = sidebar
+
+connectSidebar({
+  sidebarVisible,
+  aiSidebarVisible,
+  sidebarGroupId,
+  sidebarSessionId,
+  fileSidebarRef,
+  setSidebarTarget,
+  syncSidebarState,
+})
+
+const {
+  latencyMap,
+  latencyEnabled,
+  latencyIntervalMs,
+  onLatency,
+  handleLatencySettingsChange,
+} = useLatencyState({
+  getGroupBySessionId,
+})
+
+const { handleKeydown } = useAppKeyboard({
+  isHomeActive,
+  activeGroup,
+  toggleSidebar,
+  onCloseGroup,
+})
+
+function onCdCommand(sessionId: string, command: string) {
+  pwdTracker.handleCd(sessionId, command)
+}
+
+function onPwdOutput(sessionId: string, pwd: string) {
+  pwdTracker.setPwd(sessionId, pwd)
+}
 
 provide('theme', theme)
 provide('customColors', customColors)
 provide('pwdTracker', pwdTracker)
-
-const isHomeActive = computed(() => activeGroupId.value === HOME_ID)
-
-const activeGroup = computed(() => {
-  if (isHomeActive.value) return null
-  return groups.value.find((g) => g.connectionId === activeGroupId.value) || null
-})
-
-const activeSessionId = computed(() => {
-  return activeGroup.value?.activeSessionId || null
-})
-
-const activeSession = computed(() => {
-  if (!activeGroup.value?.activeSessionId) return null
-  return activeGroup.value.sessions.find((session) => session.id === activeGroup.value?.activeSessionId) || null
-})
-
-const TERMINAL_CACHE_MAX = 12
-
-function getLastSessionId(group: ConnectionGroup | null): string | null {
-  if (!group || group.sessions.length === 0) return null
-  return group.sessions[group.sessions.length - 1].id
-}
-
-function getGroupByConnectionId(connectionId: string | null): ConnectionGroup | null {
-  if (!connectionId) return null
-  return groups.value.find((group) => group.connectionId === connectionId) || null
-}
-
-function getGroupBySessionId(sessionId: string): ConnectionGroup | null {
-  return groups.value.find((group) => group.sessions.some((session) => session.id === sessionId)) || null
-}
-
-function setSidebarTarget(groupId: string | null, sessionId: string | null) {
-  sidebarGroupId.value = groupId
-  sidebarSessionId.value = sessionId
-}
-
-function syncSidebarState() {
-  if (groups.value.length === 0) {
-    setSidebarTarget(null, null)
-    sidebarVisible.value = false
-    aiSidebarVisible.value = false
-    return
-  }
-
-  const sidebarGroup = getGroupByConnectionId(sidebarGroupId.value)
-  if (sidebarGroup) {
-    const sessionExists = sidebarSessionId.value
-      ? sidebarGroup.sessions.some((session) => session.id === sidebarSessionId.value)
-      : false
-
-    if (!sessionExists) {
-      sidebarSessionId.value = sidebarGroup.activeSessionId || getLastSessionId(sidebarGroup)
-    }
-    return
-  }
-
-  if (activeGroupId.value !== HOME_ID) {
-    const group = getGroupByConnectionId(activeGroupId.value)
-    if (group) {
-      setSidebarTarget(group.connectionId, group.activeSessionId || getLastSessionId(group))
-      return
-    }
-  }
-
-  setSidebarTarget(null, null)
-}
-
-watch([activeGroupId, activeSessionId], ([newGroupId, newSessionId]) => {
-  if (newGroupId === HOME_ID) {
-    connectionsViewRef.value?.loadData()
-    return
-  }
-
-  if (!newGroupId) return
-
-  const group = getGroupByConnectionId(newGroupId)
-  if (!group) return
-
-  const targetSessionId = newSessionId || group.activeSessionId || getLastSessionId(group)
-  if (!targetSessionId) return
-
-  setSidebarTarget(newGroupId, targetSessionId)
-}, { immediate: true })
-
-function handleKeydown(e: KeyboardEvent) {
-  const mod = e.ctrlKey || e.metaKey
-  if (!mod) return
-
-  if (e.key === 'b') {
-    e.preventDefault()
-    toggleSidebar()
-  } else if (e.key === 'w' && !isHomeActive.value) {
-    if (document.activeElement?.closest('.xterm-container')) return
-    e.preventDefault()
-    const group = activeGroup.value
-    if (group) onCloseGroup(group.connectionId)
-  }
-}
-
-function handleLatencySettingsChange(e: Event) {
-  const detail = (e as CustomEvent).detail
-  if (detail) {
-    latencyEnabled.value = detail.enabled
-    latencyIntervalMs.value = detail.intervalMs
-  }
-}
-
-function handleMonitorSettingsChange(e: Event) {
-  const detail = (e as CustomEvent).detail
-  if (detail) {
-    monitorEnabled.value = detail.enabled
-  }
-}
 
 onMounted(async () => {
   document.addEventListener('keydown', handleKeydown)
@@ -240,6 +123,7 @@ onMounted(async () => {
   window.addEventListener('monitor-settings-change', handleMonitorSettingsChange)
   const encAvailable = await window.liteSSH.isEncryptionAvailable()
   if (!encAvailable) {
+    const { ElMessage } = await import('element-plus')
     ElMessage.warning({
       message: '密码加密不可用，连接密码将以明文存储。建议安装系统密钥环（如 gnome-keyring 或 KDE wallet）。',
       duration: 8000,
@@ -259,231 +143,6 @@ onBeforeUnmount(() => {
   window.removeEventListener('latency-settings-change', handleLatencySettingsChange)
   window.removeEventListener('monitor-settings-change', handleMonitorSettingsChange)
 })
-
-async function loadConnections() {
-  connections.value = await window.liteSSH.getConnections()
-}
-
-async function loadRecentConnections() {
-  recentConnections.value = await window.liteSSH.getRecentConnections()
-}
-
-async function initSessionPwd(sessionId: string) {
-  try {
-    const home = (await window.liteSSH.sftpExecHome(sessionId)).trim()
-    if (home) {
-      pwdTracker.initSession(sessionId, home)
-    }
-  } catch (err) {
-    console.warn('[PWD] Failed to initialize session home:', err)
-  }
-}
-
-async function createSession(connectionId: string) {
-  await loadConnections()
-  const conn = connections.value.find((c) => c.id === connectionId)
-  if (!conn) return
-
-  try {
-    const sessionId = await window.liteSSH.sshConnect(connectionId)
-    void initSessionPwd(sessionId)
-    let group = groups.value.find((g) => g.connectionId === connectionId)
-
-    const session: Session = {
-      id: sessionId,
-      connectionId,
-      connectionName: conn.name,
-      tabNumber: 0,
-    }
-
-    if (group) {
-      session.tabNumber = group.nextTabNumber++
-      group.sessions.push(session)
-      group.activeSessionId = sessionId
-    } else {
-      session.tabNumber = 1
-      group = {
-        connectionId,
-        connectionName: conn.name,
-        sessions: [session],
-        activeSessionId: sessionId,
-        nextTabNumber: 2,
-      }
-      groups.value.push(group)
-    }
-
-    activeGroupId.value = connectionId
-    setSidebarTarget(connectionId, sessionId)
-    aiSidebarVisible.value = false
-    sidebarVisible.value = true
-    await window.liteSSH.recordRecentConnection(connectionId)
-    await loadRecentConnections()
-  } catch (err: any) {
-    console.error('SSH connection failed:', err)
-    ElMessage.error(err.message || '连接失败')
-  }
-}
-
-async function onConnect(connectionId: string) {
-  await createSession(connectionId)
-}
-
-function syncConnectionName(connection: Connection) {
-  connections.value = connections.value.map((item) =>
-    item.id === connection.id ? { ...item, ...connection } : item
-  )
-  recentConnections.value = recentConnections.value.map((item) =>
-    item.id === connection.id ? { ...item, ...connection } : item
-  )
-
-  const group = groups.value.find((item) => item.connectionId === connection.id)
-  if (!group) return
-
-  group.connectionName = connection.name
-  for (const session of group.sessions) {
-    session.connectionName = connection.name
-  }
-}
-
-function onSelectGroup(connectionId: string) {
-  activeGroupId.value = connectionId
-}
-
-function onSelectHome() {
-  activeGroupId.value = HOME_ID
-}
-
-async function onQuickConnect(connectionId: string) {
-  await createSession(connectionId)
-}
-
-async function onCloseGroup(connectionId: string) {
-  const group = getGroupByConnectionId(connectionId)
-  if (!group) return
-
-  const sessionIds = group.sessions.map((session) => session.id)
-  for (const sessionId of sessionIds) {
-    try {
-      await window.liteSSH.sshDisconnect(sessionId)
-    } catch {}
-  }
-
-  const idx = groups.value.findIndex((g) => g.connectionId === connectionId)
-  if (idx !== -1) groups.value.splice(idx, 1)
-
-  if (sidebarGroupId.value === connectionId) {
-    setSidebarTarget(null, null)
-  }
-
-  if (activeGroupId.value === connectionId) {
-    activeGroupId.value = groups.value.length > 0 ? groups.value[0].connectionId : HOME_ID
-  }
-
-  syncSidebarState()
-}
-
-function onSelectSession(sessionId: string) {
-  if (!activeGroup.value) return
-  activeGroup.value.activeSessionId = sessionId
-  setSidebarTarget(activeGroup.value.connectionId, sessionId)
-}
-
-function removeSessionFromState(sessionId: string) {
-  const group = getGroupBySessionId(sessionId)
-  if (!group) return
-
-  const idx = group.sessions.findIndex((session) => session.id === sessionId)
-  if (idx === -1) return
-
-  group.sessions.splice(idx, 1)
-  pwdTracker.removeSession(sessionId)
-  fileSidebarRef.value?.clearSessionState(sessionId)
-
-  if (group.activeSessionId === sessionId) {
-    group.activeSessionId = getLastSessionId(group)
-  }
-
-  if (sidebarGroupId.value === group.connectionId && sidebarSessionId.value === sessionId) {
-    sidebarSessionId.value = group.activeSessionId || getLastSessionId(group)
-  }
-
-  if (group.sessions.length === 0) {
-    const groupIdx = groups.value.findIndex((item) => item.connectionId === group.connectionId)
-    if (groupIdx !== -1) groups.value.splice(groupIdx, 1)
-
-    if (sidebarGroupId.value === group.connectionId) {
-      setSidebarTarget(null, null)
-    }
-
-    if (activeGroupId.value === group.connectionId) {
-      activeGroupId.value = groups.value.length > 0 ? groups.value[0].connectionId : HOME_ID
-    }
-  }
-
-  syncSidebarState()
-}
-
-async function onCloseSession(sessionId: string) {
-  const group = getGroupBySessionId(sessionId)
-  await window.liteSSH.sshDisconnect(sessionId)
-  removeSessionFromState(sessionId)
-}
-
-function onSessionClosed(sessionId: string) {
-  const group = getGroupBySessionId(sessionId)
-  removeSessionFromState(sessionId)
-}
-
-function toggleSidebar() {
-  sidebarVisible.value = !sidebarVisible.value
-  if (sidebarVisible.value) aiSidebarVisible.value = false
-}
-
-function toggleAiSidebar() {
-  aiSidebarVisible.value = !aiSidebarVisible.value
-  if (aiSidebarVisible.value) sidebarVisible.value = false
-}
-
-function handleAiSelection(text: string, mode: 'send' | 'insert') {
-  if (!activeSession.value) return
-  aiSelectionRequest.value = {
-    id: Date.now(),
-    sessionId: activeSession.value.id,
-    text,
-    mode,
-  }
-  aiSidebarVisible.value = true
-  sidebarVisible.value = false
-}
-
-function handleAiSelectionConsumed(id: number) {
-  if (aiSelectionRequest.value?.id === id) {
-    aiSelectionRequest.value = null
-  }
-}
-
-function toggleMonitor() {
-  monitorVisible.value = !monitorVisible.value
-}
-
-function onCdCommand(sessionId: string, command: string) {
-  // Always track PWD from cd commands, even before sidebar opens
-  pwdTracker.handleCd(sessionId, command)
-  if (!fileSidebarRef.value) return
-  if (sidebarSessionId.value === sessionId) {
-    fileSidebarRef.value.handleTerminalCd(command)
-  }
-}
-
-function onPwdOutput(sessionId: string, pwd: string) {
-  if (!pwd.startsWith('/')) return
-  if (pwdTracker.hasSession(sessionId)) {
-    pwdTracker.setPwd(sessionId, pwd)
-  } else {
-    pwdTracker.initSession(sessionId, pwdTracker.getHomePath(sessionId) || '/', pwd)
-  }
-}
-
 </script>
 
 <template>
@@ -547,22 +206,23 @@ function onPwdOutput(sessionId: string, pwd: string) {
           </button>
         </div>
 
-        <template v-if="activeSession">
-          <div v-show="aiSidebarVisible" class="sidebar-panel" :style="{ width: sidebarWidth + 'px' }">
+        <div v-show="activeSession && aiSidebarVisible" class="sidebar-panel" :style="{ width: sidebarWidth + 'px' }">
+          <KeepAlive :max="12">
             <AiSidebar
-              :key="activeSession.id"
-              :session-id="activeSession.id"
+              v-if="activeSession"
+              :key="activeSession!.id"
+              :session-id="activeSession!.id"
               :selection-request="aiSelectionRequest"
               @close="aiSidebarVisible = false"
               @selection-consumed="handleAiSelectionConsumed"
             />
-          </div>
-          <div
-            v-show="aiSidebarVisible"
-            class="resize-handle"
-            @mousedown="startResize"
-          ></div>
-        </template>
+          </KeepAlive>
+        </div>
+        <div
+          v-show="activeSession && aiSidebarVisible"
+          class="resize-handle"
+          @mousedown="startResize"
+        ></div>
 
         <template v-if="!aiSidebarVisible && sidebarVisible && sidebarSessionId">
           <div class="sidebar-panel" :style="{ width: sidebarWidth + 'px' }">
@@ -590,13 +250,13 @@ function onPwdOutput(sessionId: string, pwd: string) {
             @add="createSession"
           />
           <div class="terminal-container">
-            <KeepAlive :max="TERMINAL_CACHE_MAX">
+            <KeepAlive :max="12">
               <TerminalTab
                 v-if="activeSession"
-                :key="activeSession.id"
-                :session-id="activeSession.id"
-                :connection-name="activeSession.connectionName"
-                :connection-id="activeSession.connectionId"
+                :key="activeSession!.id"
+                :session-id="activeSession!.id"
+                :connection-name="activeSession!.connectionName"
+                :connection-id="activeSession!.connectionId"
                 @closed="onSessionClosed"
                 @cd-command="onCdCommand"
                 @pwd-output="onPwdOutput"
@@ -616,9 +276,9 @@ function onPwdOutput(sessionId: string, pwd: string) {
           <div class="monitor-panel-wrapper" :style="{ width: monitorWidth + 'px' }">
             <MonitorPanel
               :key="activeGroup!.connectionId"
-              :session-id="activeSession.id"
+              :session-id="activeSession!.id"
               :connection-id="activeGroup!.connectionId"
-              :connection-name="activeSession.connectionName"
+              :connection-name="activeSession!.connectionName"
             />
           </div>
         </template>

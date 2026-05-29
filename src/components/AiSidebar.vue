@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import type {
   AiChatMessage,
@@ -47,6 +47,29 @@ type MarkdownBlock =
   | { type: 'code'; content: string; language: string }
   | { type: 'html'; content: string }
 
+type AiSessionState = {
+  messages: ChatItem[]
+  input: string
+  loading: boolean
+  persisting: boolean
+}
+
+const aiSessionStates = new Map<string, AiSessionState>()
+
+function getAiSessionState(sessionId: string): AiSessionState {
+  let state = aiSessionStates.get(sessionId)
+  if (!state) {
+    state = {
+      messages: reactive([]) as ChatItem[],
+      input: '',
+      loading: false,
+      persisting: false,
+    }
+    aiSessionStates.set(sessionId, state)
+  }
+  return state
+}
+
 const settings = ref<AiSettings>({
   baseUrl: 'https://api.openai.com/v1',
   model: 'gpt-4o-mini',
@@ -61,31 +84,37 @@ const loading = ref(false)
 const showSettings = ref(false)
 const showHistory = ref(false)
 const historyList = ref<AiHistorySummary[]>([])
+const copiedKey = ref('')
 const consumedSelectionIds = new Set<number>()
 let activeStreamUnsubscribe: (() => void) | null = null
+let initialLoadPromise: Promise<void> | null = null
+let copiedTimer: ReturnType<typeof setTimeout> | null = null
+let currentSessionState = getAiSessionState(props.sessionId)
 
 const canSend = computed(() => input.value.trim().length > 0 && !loading.value)
 
-onMounted(async () => {
-  settings.value = await window.liteSSH.getAiSettings()
-  draftSettings.value = { ...settings.value }
-  await loadHistory()
-  await loadHistoryList()
+onMounted(() => {
+  bindSessionState(props.sessionId)
+  ensureInitialLoad().catch(() => {})
 })
 
 onBeforeUnmount(() => {
-  activeStreamUnsubscribe?.()
-  activeStreamUnsubscribe = null
+  if (copiedTimer) clearTimeout(copiedTimer)
 })
 
 watch(
   () => props.sessionId,
   async () => {
-    input.value = ''
-    loading.value = false
-    await loadHistory()
+    saveCurrentSessionDraft()
+    bindSessionState(props.sessionId)
+    initialLoadPromise = null
+    await ensureInitialLoad()
   }
 )
+
+watch(input, (value) => {
+  currentSessionState.input = value
+})
 
 watch(
   () => props.selectionRequest,
@@ -93,6 +122,7 @@ watch(
     if (!request?.text) return
     if (request.sessionId !== props.sessionId) return
     if (consumedSelectionIds.has(request.id)) return
+    await ensureInitialLoad()
     consumedSelectionIds.add(request.id)
     emit('selectionConsumed', request.id)
 
@@ -100,7 +130,8 @@ watch(
       input.value = request.text
       return
     }
-    await sendText(request.text)
+    const sent = await sendText(request.text)
+    if (!sent) input.value = request.text
   },
   { immediate: true }
 )
@@ -116,10 +147,13 @@ function escapeHtml(value: string): string {
 
 function renderInlineMarkdown(value: string): string {
   let rendered = escapeHtml(value)
-  rendered = rendered.replace(/`([^`]+)`/g, '<code>$1</code>')
+  rendered = rendered.replace(/`([^`]+)`/g, '\x00code\x01$1\x00/code\x01')
   rendered = rendered.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
   rendered = rendered.replace(/\*([^*]+)\*/g, '<em>$1</em>')
-  rendered = rendered.replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noreferrer">$1</a>')
+  rendered = rendered.replace(/~~([^~]+)~~/g, '<del>$1</del>')
+  rendered = rendered.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noreferrer">$1</a>')
+  rendered = rendered.replace(/(?<![="'])https?:\/\/[^\s<>"')]+/g, '<a href="$&" target="_blank" rel="noreferrer">$&</a>')
+  rendered = rendered.replace(/\x00/g, '<').replace(/\x01/g, '>')
   return rendered
 }
 
@@ -127,7 +161,8 @@ function parseMarkdown(markdown: string): MarkdownBlock[] {
   const lines = markdown.split(/\r?\n/)
   const blocks: MarkdownBlock[] = []
   let paragraph: string[] = []
-  let list: string[] = []
+  let listItems: string[] = []
+  let listOrdered = false
   let code: string[] | null = null
   let codeLanguage = ''
 
@@ -138,9 +173,11 @@ function parseMarkdown(markdown: string): MarkdownBlock[] {
   }
 
   const flushList = () => {
-    if (list.length === 0) return
-    blocks.push({ type: 'html', content: `<ul>${list.map((item) => `<li>${renderInlineMarkdown(item)}</li>`).join('')}</ul>` })
-    list = []
+    if (listItems.length === 0) return
+    const tag = listOrdered ? 'ol' : 'ul'
+    blocks.push({ type: 'html', content: `<${tag}>${listItems.map((item) => `<li>${renderInlineMarkdown(item)}</li>`).join('')}</${tag}>` })
+    listItems = []
+    listOrdered = false
   }
 
   for (const line of lines) {
@@ -170,19 +207,33 @@ function parseMarkdown(markdown: string): MarkdownBlock[] {
       continue
     }
 
-    const heading = line.match(/^(#{1,3})\s+(.+)$/)
+    const heading = line.match(/^(#{1,6})\s+(.+)$/)
     if (heading) {
       flushParagraph()
       flushList()
-      const level = heading[1].length + 2
+      const level = Math.min(heading[1].length, 6)
       blocks.push({ type: 'html', content: `<h${level}>${renderInlineMarkdown(heading[2])}</h${level}>` })
       continue
     }
 
-    const listItem = line.match(/^\s*[-*]\s+(.+)$/)
-    if (listItem) {
+    if (/^[-*_]{3,}\s*$/.test(line.trim())) {
       flushParagraph()
-      list.push(listItem[1])
+      flushList()
+      blocks.push({ type: 'html', content: '<hr>' })
+      continue
+    }
+
+    const unorderedItem = line.match(/^\s*[-*+]\s+(.+)$/)
+    const orderedItem = line.match(/^\s*\d+\.\s+(.+)$/)
+
+    if (unorderedItem || orderedItem) {
+      flushParagraph()
+      const isOrdered = !!orderedItem
+      if (listItems.length > 0 && listOrdered !== isOrdered) {
+        flushList()
+      }
+      listOrdered = isOrdered
+      listItems.push((unorderedItem || orderedItem)![1])
       continue
     }
 
@@ -249,24 +300,103 @@ function fromHistoryRecord(record: AiHistoryRecord): ChatItem {
   }
 }
 
-async function loadHistory() {
-  const records = await window.liteSSH.getAiSessionHistory(props.sessionId)
-  messages.value = records.map(fromHistoryRecord)
+function saveCurrentSessionDraft() {
+  currentSessionState.input = input.value
+}
+
+function bindSessionState(sessionId: string) {
+  currentSessionState = getAiSessionState(sessionId)
+  messages.value = currentSessionState.messages
+  input.value = currentSessionState.input
+  loading.value = currentSessionState.loading
+}
+
+function setSessionLoading(sessionId: string, value: boolean) {
+  const state = getAiSessionState(sessionId)
+  state.loading = value
+  if (props.sessionId === sessionId) loading.value = value
+}
+
+function syncVisibleSession(sessionId: string) {
+  if (props.sessionId !== sessionId) return
+  const state = getAiSessionState(sessionId)
+  messages.value = state.messages
+  loading.value = state.loading
+}
+
+async function loadHistory(sessionId = props.sessionId) {
+  try {
+    const records = await window.liteSSH.getAiSessionHistory(sessionId)
+    const state = getAiSessionState(sessionId)
+    const hasLiveMessages = state.loading || state.persisting || state.messages.some((message) => message.streaming)
+    if (!hasLiveMessages) {
+      state.messages.splice(0, state.messages.length, ...records.map(fromHistoryRecord))
+    } else if (state.messages.length === 0) {
+      state.messages.splice(0, 0, ...records.map(fromHistoryRecord))
+    }
+    syncVisibleSession(sessionId)
+  } catch (err: any) {
+    ElMessage.warning(err?.message || '加载 AI 历史记录失败')
+  }
+}
+
+async function copyText(text: string, key: string) {
+  const content = text.trim()
+  if (!content) return
+  try {
+    await window.liteSSH.clipboardWriteText(content)
+    copiedKey.value = key
+    if (copiedTimer) clearTimeout(copiedTimer)
+    copiedTimer = setTimeout(() => {
+      if (copiedKey.value === key) copiedKey.value = ''
+      copiedTimer = null
+    }, 1400)
+  } catch (err: any) {
+    ElMessage.warning(err?.message || '复制失败')
+  }
 }
 
 async function loadHistoryList() {
-  historyList.value = await window.liteSSH.listAiSessionHistories()
+  try {
+    historyList.value = await window.liteSSH.listAiSessionHistories()
+  } catch {
+    historyList.value = []
+  }
 }
 
 async function loadHistorySession(sessionId: string) {
-  const records = await window.liteSSH.getAiSessionHistory(sessionId)
-  messages.value = records.map(fromHistoryRecord)
-  showHistory.value = false
+  try {
+    const records = await window.liteSSH.getAiSessionHistory(sessionId)
+    messages.value = records.map(fromHistoryRecord)
+    showHistory.value = false
+  } catch (err: any) {
+    ElMessage.warning(err?.message || '加载 AI 历史记录失败')
+  }
 }
 
-async function persistMessage(message: ChatItem) {
-  await window.liteSSH.appendAiSessionHistory(props.sessionId, toHistoryRecord(message))
-  await loadHistoryList()
+async function persistMessage(sessionId: string, message: ChatItem) {
+  try {
+    await window.liteSSH.appendAiSessionHistory(sessionId, toHistoryRecord(message))
+    await loadHistoryList()
+  } catch (err) {
+    console.warn('Failed to persist AI message:', err)
+  }
+}
+
+async function ensureInitialLoad() {
+  if (!initialLoadPromise) {
+    initialLoadPromise = (async () => {
+      try {
+        settings.value = await window.liteSSH.getAiSettings()
+        draftSettings.value = { ...settings.value }
+      } catch (err: any) {
+        ElMessage.warning(err?.message || '加载 AI 设置失败')
+      }
+      await loadHistory(props.sessionId)
+      await loadHistoryList()
+    })()
+  }
+  await initialLoadPromise
 }
 
 async function saveSettings() {
@@ -288,26 +418,35 @@ async function saveSettings() {
   showSettings.value = false
 }
 
-async function sendText(text: string) {
+async function sendText(text: string): Promise<boolean> {
+  const sessionId = props.sessionId
+  const state = getAiSessionState(sessionId)
   const content = text.trim()
-  if (!content || loading.value) return
+  if (!content) return false
+  if (state.loading) {
+    ElMessage.warning('AI 正在回复，请稍后再发送')
+    return false
+  }
 
   const userMessage = createMessage('user', content)
-  messages.value.push(userMessage)
-  await persistMessage(userMessage)
-  loading.value = true
+  state.messages.push(userMessage)
+  syncVisibleSession(sessionId)
+  await persistMessage(sessionId, userMessage)
+  setSessionLoading(sessionId, true)
 
-  const chatMessages = messages.value
+  const chatMessages = state.messages
     .filter((message) => !message.error && !message.streaming)
     .map(({ role, content }) => ({ role, content }))
   const assistantMessage = createMessage('assistant', '', false, { streaming: true })
-  messages.value.push(assistantMessage)
-  const assistantIndex = messages.value.length - 1
+  state.messages.push(assistantMessage)
+  syncVisibleSession(sessionId)
+  const assistantIndex = state.messages.length - 1
 
-  const getAssistantMessage = () => messages.value[assistantIndex] || assistantMessage
+  const getAssistantMessage = () => state.messages[assistantIndex] || assistantMessage
   const updateAssistantMessage = (patch: Partial<ChatItem>) => {
     const current = getAssistantMessage()
-    messages.value.splice(assistantIndex, 1, { ...current, ...patch })
+    state.messages.splice(assistantIndex, 1, { ...current, ...patch })
+    syncVisibleSession(sessionId)
   }
 
   try {
@@ -359,9 +498,16 @@ async function sendText(text: string) {
     }
   } finally {
     updateAssistantMessage({ streaming: false })
-    await persistMessage(getAssistantMessage())
-    loading.value = false
+    const state = getAiSessionState(sessionId)
+    state.persisting = true
+    try {
+      await persistMessage(sessionId, getAssistantMessage())
+    } finally {
+      state.persisting = false
+      setSessionLoading(sessionId, false)
+    }
   }
+  return true
 }
 
 async function sendMessage() {
@@ -372,7 +518,9 @@ async function sendMessage() {
 }
 
 function clearMessages() {
-  messages.value = []
+  const state = getAiSessionState(props.sessionId)
+  state.messages.splice(0, state.messages.length)
+  syncVisibleSession(props.sessionId)
   window.liteSSH.clearAiSessionHistory(props.sessionId).catch(() => {})
   loadHistoryList().catch(() => {})
 }
@@ -455,15 +603,65 @@ function clearMessages() {
           <summary>思考内容</summary>
           <div class="reasoning-content">
             <template v-for="(block, index) in parseMarkdown(message.reasoningContent)" :key="index">
-              <pre v-if="block.type === 'code'" class="markdown-code"><code>{{ block.content }}</code></pre>
+              <div v-if="block.type === 'code'" class="code-block">
+                <div class="code-block-header">
+                  <span class="code-language">{{ block.language || 'text' }}</span>
+                  <button
+                    type="button"
+                    class="copy-btn"
+                    :title="copiedKey === `${message.id}-reasoning-code-${index}` ? '已复制' : '复制代码'"
+                    @click="copyText(block.content, `${message.id}-reasoning-code-${index}`)"
+                  >
+                    <svg v-if="copiedKey === `${message.id}-reasoning-code-${index}`" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <polyline points="20 6 9 17 4 12"/>
+                    </svg>
+                    <svg v-else width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+                    </svg>
+                  </button>
+                </div>
+                <pre class="markdown-code"><code>{{ block.content }}</code></pre>
+              </div>
               <div v-else class="markdown-block" v-html="block.content"></div>
             </template>
           </div>
         </details>
         <div v-if="message.content || (!message.reasoningContent && message.streaming)" class="message-content">
+          <button
+            v-if="message.content && message.role === 'assistant'"
+            type="button"
+            class="message-copy-btn"
+            :title="copiedKey === `${message.id}-message` ? '已复制' : '复制回复'"
+            @click="copyText(message.content, `${message.id}-message`)"
+          >
+            <svg v-if="copiedKey === `${message.id}-message`" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="20 6 9 17 4 12"/>
+            </svg>
+            <svg v-else width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+            </svg>
+          </button>
           <template v-if="message.content">
             <template v-for="(block, index) in parseMarkdown(message.content)" :key="index">
-              <pre v-if="block.type === 'code'" class="markdown-code"><code>{{ block.content }}</code></pre>
+              <div v-if="block.type === 'code'" class="code-block">
+                <div class="code-block-header">
+                  <span class="code-language">{{ block.language || 'text' }}</span>
+                  <button
+                    type="button"
+                    class="copy-btn"
+                    :title="copiedKey === `${message.id}-code-${index}` ? '已复制' : '复制代码'"
+                    @click="copyText(block.content, `${message.id}-code-${index}`)"
+                  >
+                    <svg v-if="copiedKey === `${message.id}-code-${index}`" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <polyline points="20 6 9 17 4 12"/>
+                    </svg>
+                    <svg v-else width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+                    </svg>
+                  </button>
+                </div>
+                <pre class="markdown-code"><code>{{ block.content }}</code></pre>
+              </div>
               <div v-else class="markdown-block" v-html="block.content"></div>
             </template>
           </template>
@@ -724,6 +922,7 @@ function clearMessages() {
 }
 
 .message-content {
+  position: relative;
   max-width: 100%;
   word-break: break-word;
   border: 1px solid var(--border-color);
@@ -733,6 +932,10 @@ function clearMessages() {
   padding: 8px 10px;
   font-size: 12px;
   line-height: 1.5;
+}
+
+.chat-message.assistant .message-content {
+  padding-right: 38px;
 }
 
 .chat-message.user .message-content {
@@ -746,9 +949,9 @@ function clearMessages() {
 }
 
 .markdown-block + .markdown-block,
-.markdown-block + .markdown-code,
-.markdown-code + .markdown-block,
-.markdown-code + .markdown-code {
+.markdown-block + .code-block,
+.code-block + .markdown-block,
+.code-block + .code-block {
   margin-top: 8px;
 }
 
@@ -758,19 +961,39 @@ function clearMessages() {
 
 .markdown-block :deep(h3),
 .markdown-block :deep(h4),
-.markdown-block :deep(h5) {
+.markdown-block :deep(h5),
+.markdown-block :deep(h6) {
   margin: 8px 0 4px;
   font-size: 13px;
   line-height: 1.35;
 }
 
-.markdown-block :deep(ul) {
+.markdown-block :deep(h1),
+.markdown-block :deep(h2) {
+  margin: 10px 0 6px;
+  font-size: 14px;
+  line-height: 1.35;
+}
+
+.markdown-block :deep(ul),
+.markdown-block :deep(ol) {
   margin: 4px 0 4px 16px;
   padding: 0;
 }
 
 .markdown-block :deep(li) {
   margin: 2px 0;
+}
+
+.markdown-block :deep(del) {
+  text-decoration: line-through;
+  opacity: 0.6;
+}
+
+.markdown-block :deep(hr) {
+  border: none;
+  border-top: 1px solid var(--border-color);
+  margin: 8px 0;
 }
 
 .markdown-block :deep(blockquote) {
@@ -782,7 +1005,8 @@ function clearMessages() {
 }
 
 .markdown-block :deep(code),
-.markdown-code {
+.markdown-code,
+.code-language {
   font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
 }
 
@@ -796,12 +1020,72 @@ function clearMessages() {
   color: var(--accent);
 }
 
+.code-block {
+  margin: 0;
+  overflow: hidden;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background: var(--bg-tertiary);
+}
+
+.code-block-header {
+  min-height: 28px;
+  padding: 4px 6px 4px 8px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  border-bottom: 1px solid var(--border-color);
+  color: var(--text-secondary);
+}
+
+.code-language {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10px;
+}
+
+.copy-btn,
+.message-copy-btn {
+  width: 24px;
+  height: 24px;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-secondary);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+
+.copy-btn:hover,
+.message-copy-btn:hover {
+  border-color: var(--border-color);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+}
+
+.message-copy-btn {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  opacity: 0;
+}
+
+.message-content:hover .message-copy-btn,
+.message-copy-btn:focus-visible {
+  opacity: 1;
+}
+
 .markdown-code {
   margin: 0;
   padding: 8px;
   overflow-x: auto;
-  border-radius: 6px;
-  background: var(--bg-tertiary);
+  background: transparent;
   color: var(--text-primary);
   font-size: 11px;
   line-height: 1.45;
