@@ -1,8 +1,15 @@
 export {}
 
+declare module '*.vue' {
+  import type { DefineComponent } from 'vue'
+  const component: DefineComponent<{}, {}, any>
+  export default component
+}
+
 declare global {
   interface Window {
     liteSSH: {
+      getAppBootstrap: () => Promise<AppBootstrapData>
       getConnections: () => Promise<Connection[]>
       saveConnection: (conn: Partial<Connection> & { name: string; host: string; username: string; password: string }) => Promise<Connection>
       deleteConnection: (id: string) => Promise<boolean>
@@ -66,9 +73,13 @@ declare global {
         error?: string
       }>
 
+      sshRemoveHostKey: (host: string, port: number) => Promise<void>
+      sshGetHostKeyFingerprint: (host: string, port: number) => Promise<string | null>
+
       sshStartLatencyMonitor: (sessionId: string) => Promise<void>
       sshStopLatencyMonitor: (sessionId: string) => Promise<void>
       sshMeasureLatency: (sessionId: string) => Promise<number>
+      sshExec: (sessionId: string, command: string, timeoutMs?: number) => Promise<string>
       getMonitorEnabled: () => Promise<boolean>
       setMonitorEnabled: (enabled: boolean) => Promise<void>
       getMonitorIntervalMs: () => Promise<number>
@@ -135,6 +146,17 @@ export interface Connection {
   x11Display?: number
   createdAt: number
   updatedAt: number
+}
+
+export interface AppBootstrapData {
+  encryptionAvailable: boolean
+  connections: Connection[]
+  groups: Group[]
+  recentConnections: Connection[]
+  latencyEnabled: boolean
+  latencyIntervalMs: number
+  monitorEnabled: boolean
+  monitorIntervalMs: number
 }
 
 export interface Group {

@@ -481,7 +481,7 @@ export class SSHManager {
           onProgress(transferred, totalSize)
         })
 
-        readStream.on('error', (err) => {
+        readStream.on('error', (err: Error) => {
           this.activeTransfers.delete(transferId)
           writeStream.close()
           if (!transfer.cancelled) {
@@ -628,7 +628,7 @@ hasSession(sessionId: string): boolean {
         stream.on('data', () => finish())
         stream.stderr.on('data', () => finish())
         stream.on('close', () => finish())
-        stream.on('error', (streamErr) => finish(streamErr))
+        stream.on('error', (streamErr: Error) => finish(streamErr))
       })
     })
   }
@@ -674,7 +674,7 @@ hasSession(sessionId: string): boolean {
         stream.on('close', () => {
           finish(undefined, output)
         })
-        stream.on('error', (streamErr) => {
+        stream.on('error', (streamErr: Error) => {
           finish(streamErr)
         })
       })
