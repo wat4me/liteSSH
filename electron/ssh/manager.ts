@@ -125,6 +125,8 @@ export class SSHManager {
       }
 
       client.on('ready', () => {
+        // 关闭 Nagle 算法：减少按键回显延迟，避免小包被合并发送
+        try { client.setNoDelay(true) } catch {}
         const ptyOptions = {
           term: 'xterm-256color',
           cols: 80,
