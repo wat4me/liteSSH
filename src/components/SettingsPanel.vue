@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, watch, onMounted } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage } from 'element-plus/es/components/message/index'
 import { useTheme } from '../composables/useTheme'
 import type { Theme, CustomColors } from '../composables/useTheme'
 
@@ -28,13 +28,31 @@ watch(() => customColors.value, (val) => {
 
 onMounted(async () => {
   localTheme.value = theme.value
-  downloadPath.value = await window.liteSSH.getDownloadPath()
-  terminalFontSize.value = await window.liteSSH.getTerminalFontSize()
-  recentDownloadPaths.value = await window.liteSSH.getRecentDownloadPaths()
-  latencyEnabled.value = await window.liteSSH.getLatencyEnabled()
-  latencyIntervalSec.value = (await window.liteSSH.getLatencyIntervalMs()) / 1000
-  monitorEnabled.value = await window.liteSSH.getMonitorEnabled()
-  monitorIntervalSec.value = (await window.liteSSH.getMonitorIntervalMs()) / 1000
+  const [
+    nextDownloadPath,
+    nextTerminalFontSize,
+    nextRecentDownloadPaths,
+    nextLatencyEnabled,
+    nextLatencyIntervalMs,
+    nextMonitorEnabled,
+    nextMonitorIntervalMs,
+  ] = await Promise.all([
+    window.liteSSH.getDownloadPath(),
+    window.liteSSH.getTerminalFontSize(),
+    window.liteSSH.getRecentDownloadPaths(),
+    window.liteSSH.getLatencyEnabled(),
+    window.liteSSH.getLatencyIntervalMs(),
+    window.liteSSH.getMonitorEnabled(),
+    window.liteSSH.getMonitorIntervalMs(),
+  ])
+
+  downloadPath.value = nextDownloadPath
+  terminalFontSize.value = nextTerminalFontSize
+  recentDownloadPaths.value = nextRecentDownloadPaths
+  latencyEnabled.value = nextLatencyEnabled
+  latencyIntervalSec.value = nextLatencyIntervalMs / 1000
+  monitorEnabled.value = nextMonitorEnabled
+  monitorIntervalSec.value = nextMonitorIntervalMs / 1000
 })
 
 function selectTheme(t: Theme) {

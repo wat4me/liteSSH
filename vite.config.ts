@@ -6,6 +6,27 @@ import { resolve } from 'path'
 
 export default defineConfig({
   base: './',
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (id.includes('@element-plus/icons-vue')) {
+            return 'vendor-element-icons'
+          }
+          if (id.includes('element-plus')) {
+            return 'vendor-element-plus'
+          }
+          if (id.includes('@xterm')) {
+            return 'vendor-xterm'
+          }
+          if (id.includes('/node_modules/vue/') || id.includes('\\node_modules\\vue\\') || id.includes('/node_modules/@vue/') || id.includes('\\node_modules\\@vue\\')) {
+            return 'vendor-vue'
+          }
+          return undefined
+        },
+      },
+    },
+  },
   plugins: [
     vue(),
     electron([

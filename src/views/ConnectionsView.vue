@@ -1,11 +1,13 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { defineAsyncComponent, ref, computed, onBeforeUnmount, watch } from 'vue'
+import { ElMessage } from 'element-plus/es/components/message/index'
+import { ElMessageBox } from 'element-plus/es/components/message-box/index'
 import { Search, Plus, Download, Upload } from '@element-plus/icons-vue'
 import GroupPanel from '../components/GroupPanel.vue'
 import ConnectionRow from '../components/ConnectionRow.vue'
-import ConnectionForm from '../components/ConnectionForm.vue'
 import type { Connection, Group } from '../env.d.ts'
+
+const ConnectionForm = defineAsyncComponent(() => import('../components/ConnectionForm.vue'))
 
 const UNGROUPED_ID = '__ungrouped__'
 
@@ -20,6 +22,17 @@ const emit = defineEmits<{
   (e: 'connection-saved', connection: Connection): void
 }>()
 
+const props = withDefaults(defineProps<{
+  initialData?: {
+    connections: Connection[]
+    groups: Group[]
+  } | null
+  initialDataPending?: boolean
+}>(), {
+  initialData: null,
+  initialDataPending: false,
+})
+
 const connections = ref<Connection[]>([])
 const groups = ref<Group[]>([])
 const activeGroupId = ref<string | null>(null)
@@ -29,6 +42,7 @@ const editingConnection = ref<Connection | null>(null)
 const testStatuses = ref<Map<string, TestStatus>>(new Map())
 const testTimers = ref<Map<string, ReturnType<typeof setTimeout>>>(new Map())
 const importing = ref(false)
+const initialized = ref(false)
 
 const connectionCounts = computed(() => {
   const counts: Record<string, number> = {}
@@ -70,14 +84,35 @@ const filteredConnections = computed(() => {
   return list
 })
 
-onMounted(async () => {
-  await loadData()
-  selectInitialGroup()
-})
+watch(
+  () => [props.initialData, props.initialDataPending] as const,
+  async ([initialData, initialDataPending]) => {
+    if (initialized.value) return
+
+    if (initialData) {
+      connections.value = [...initialData.connections]
+      groups.value = [...initialData.groups]
+      selectInitialGroup()
+      initialized.value = true
+      return
+    }
+
+    if (initialDataPending) return
+
+    await loadData()
+    selectInitialGroup()
+    initialized.value = true
+  },
+  { immediate: true },
+)
 
 async function loadData() {
-  connections.value = await window.liteSSH.getConnections()
-  groups.value = await window.liteSSH.getGroups()
+  const [nextConnections, nextGroups] = await Promise.all([
+    window.liteSSH.getConnections(),
+    window.liteSSH.getGroups(),
+  ])
+  connections.value = nextConnections
+  groups.value = nextGroups
 }
 
 function selectInitialGroup() {

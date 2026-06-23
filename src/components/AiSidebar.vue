@@ -1,15 +1,9 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
-import { ElMessage } from 'element-plus'
-import type {
-  AiChatMessage,
-  AiChatResult,
-  AiChatStreamPayload,
-  AiHistoryRecord,
-  AiHistorySummary,
-  AiSettings,
-  AiUsage,
-} from '../env.d.ts'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { ElMessage } from 'element-plus/es/components/message/index'
+import type { AiHistorySummary, AiSettings, AiUsage } from '../env.d.ts'
+import { useMarkdownRenderer } from '../composables/useMarkdownRenderer'
+import { useAiChat, type ChatItem } from '../composables/useAiChat'
 
 const DEFAULT_SYSTEM_PROMPT = [
   '你是 liteSSH 内置的 AI 助手，主要帮助用户理解和处理 SSH 终端、Linux 命令、报错排查、服务运维和文件操作问题。',
@@ -34,50 +28,16 @@ const emit = defineEmits<{
   (e: 'selectionConsumed', id: number): void
 }>()
 
-type ChatItem = AiChatMessage & {
-  id: string
-  createdAt: number
-  error?: boolean
-  reasoningContent?: string
-  usage?: AiUsage
-  streaming?: boolean
-}
+const { parseMarkdown } = useMarkdownRenderer()
+const {
+  settings,
+  sendText,
+  clearMessages,
+  loadHistory,
+  getSessionState,
+  saveSessionInput,
+} = useAiChat()
 
-type MarkdownBlock =
-  | { type: 'code'; content: string; language: string }
-  | { type: 'html'; content: string }
-
-type AiSessionState = {
-  messages: ChatItem[]
-  input: string
-  loading: boolean
-  persisting: boolean
-}
-
-const aiSessionStates = new Map<string, AiSessionState>()
-
-function getAiSessionState(sessionId: string): AiSessionState {
-  let state = aiSessionStates.get(sessionId)
-  if (!state) {
-    state = {
-      messages: reactive([]) as ChatItem[],
-      input: '',
-      loading: false,
-      persisting: false,
-    }
-    aiSessionStates.set(sessionId, state)
-  }
-  return state
-}
-
-const settings = ref<AiSettings>({
-  baseUrl: 'https://api.openai.com/v1',
-  model: 'gpt-4o-mini',
-  apiKey: '',
-  systemPrompt: DEFAULT_SYSTEM_PROMPT,
-  temperature: 0.2,
-})
-const draftSettings = ref<AiSettings>({ ...settings.value })
 const messages = ref<ChatItem[]>([])
 const input = ref('')
 const loading = ref(false)
@@ -86,34 +46,51 @@ const showHistory = ref(false)
 const historyList = ref<AiHistorySummary[]>([])
 const copiedKey = ref('')
 const consumedSelectionIds = new Set<number>()
-let activeStreamUnsubscribe: (() => void) | null = null
+const draftSettings = ref<AiSettings>({ ...settings.value })
 let initialLoadPromise: Promise<void> | null = null
 let copiedTimer: ReturnType<typeof setTimeout> | null = null
-let currentSessionState = getAiSessionState(props.sessionId)
+let historyListLoaded = false
 
 const canSend = computed(() => input.value.trim().length > 0 && !loading.value)
 
+function syncMessages(msgs: ChatItem[]) {
+  messages.value = msgs
+}
+
 onMounted(() => {
-  bindSessionState(props.sessionId)
+  const state = getSessionState(props.sessionId)
+  messages.value = state.messages
+  input.value = state.input
+  loading.value = state.loading
   ensureInitialLoad().catch(() => {})
 })
 
 onBeforeUnmount(() => {
   if (copiedTimer) clearTimeout(copiedTimer)
+  saveSessionInput(props.sessionId, input.value)
 })
 
 watch(
   () => props.sessionId,
-  async () => {
-    saveCurrentSessionDraft()
-    bindSessionState(props.sessionId)
+  async (newId, oldId) => {
+    if (oldId) saveSessionInput(oldId, input.value)
+    const state = getSessionState(newId)
+    messages.value = state.messages
+    input.value = state.input
+    loading.value = state.loading
     initialLoadPromise = null
     await ensureInitialLoad()
   }
 )
 
 watch(input, (value) => {
-  currentSessionState.input = value
+  saveSessionInput(props.sessionId, value)
+})
+
+watch(showHistory, (value) => {
+  if (value) {
+    void ensureHistoryListLoaded()
+  }
 })
 
 watch(
@@ -130,128 +107,11 @@ watch(
       input.value = request.text
       return
     }
-    const sent = await sendText(request.text)
+    const sent = await handleSendText(request.text)
     if (!sent) input.value = request.text
   },
   { immediate: true }
 )
-
-function escapeHtml(value: string): string {
-  return value
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;')
-}
-
-function renderInlineMarkdown(value: string): string {
-  let rendered = escapeHtml(value)
-  rendered = rendered.replace(/`([^`]+)`/g, '\x00code\x01$1\x00/code\x01')
-  rendered = rendered.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
-  rendered = rendered.replace(/\*([^*]+)\*/g, '<em>$1</em>')
-  rendered = rendered.replace(/~~([^~]+)~~/g, '<del>$1</del>')
-  rendered = rendered.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noreferrer">$1</a>')
-  rendered = rendered.replace(/(?<![="'])https?:\/\/[^\s<>"')]+/g, '<a href="$&" target="_blank" rel="noreferrer">$&</a>')
-  rendered = rendered.replace(/\x00/g, '<').replace(/\x01/g, '>')
-  return rendered
-}
-
-function parseMarkdown(markdown: string): MarkdownBlock[] {
-  const lines = markdown.split(/\r?\n/)
-  const blocks: MarkdownBlock[] = []
-  let paragraph: string[] = []
-  let listItems: string[] = []
-  let listOrdered = false
-  let code: string[] | null = null
-  let codeLanguage = ''
-
-  const flushParagraph = () => {
-    if (paragraph.length === 0) return
-    blocks.push({ type: 'html', content: `<p>${paragraph.map(renderInlineMarkdown).join('<br>')}</p>` })
-    paragraph = []
-  }
-
-  const flushList = () => {
-    if (listItems.length === 0) return
-    const tag = listOrdered ? 'ol' : 'ul'
-    blocks.push({ type: 'html', content: `<${tag}>${listItems.map((item) => `<li>${renderInlineMarkdown(item)}</li>`).join('')}</${tag}>` })
-    listItems = []
-    listOrdered = false
-  }
-
-  for (const line of lines) {
-    const fence = line.match(/^```(\S*)\s*$/)
-    if (fence) {
-      if (code) {
-        blocks.push({ type: 'code', content: code.join('\n'), language: codeLanguage })
-        code = null
-        codeLanguage = ''
-      } else {
-        flushParagraph()
-        flushList()
-        code = []
-        codeLanguage = fence[1] || ''
-      }
-      continue
-    }
-
-    if (code) {
-      code.push(line)
-      continue
-    }
-
-    if (!line.trim()) {
-      flushParagraph()
-      flushList()
-      continue
-    }
-
-    const heading = line.match(/^(#{1,6})\s+(.+)$/)
-    if (heading) {
-      flushParagraph()
-      flushList()
-      const level = Math.min(heading[1].length, 6)
-      blocks.push({ type: 'html', content: `<h${level}>${renderInlineMarkdown(heading[2])}</h${level}>` })
-      continue
-    }
-
-    if (/^[-*_]{3,}\s*$/.test(line.trim())) {
-      flushParagraph()
-      flushList()
-      blocks.push({ type: 'html', content: '<hr>' })
-      continue
-    }
-
-    const unorderedItem = line.match(/^\s*[-*+]\s+(.+)$/)
-    const orderedItem = line.match(/^\s*\d+\.\s+(.+)$/)
-
-    if (unorderedItem || orderedItem) {
-      flushParagraph()
-      const isOrdered = !!orderedItem
-      if (listItems.length > 0 && listOrdered !== isOrdered) {
-        flushList()
-      }
-      listOrdered = isOrdered
-      listItems.push((unorderedItem || orderedItem)![1])
-      continue
-    }
-
-    if (line.startsWith('> ')) {
-      flushParagraph()
-      flushList()
-      blocks.push({ type: 'html', content: `<blockquote>${renderInlineMarkdown(line.slice(2))}</blockquote>` })
-      continue
-    }
-
-    paragraph.push(line)
-  }
-
-  if (code) blocks.push({ type: 'code', content: code.join('\n'), language: codeLanguage })
-  flushParagraph()
-  flushList()
-  return blocks
-}
 
 function formatUsage(usage?: AiUsage): string {
   if (!usage) return ''
@@ -261,83 +121,6 @@ function formatUsage(usage?: AiUsage): string {
   if (usage.reasoningTokens !== undefined) parts.push(`思考 ${usage.reasoningTokens}`)
   if (usage.totalTokens !== undefined) parts.push(`总计 ${usage.totalTokens}`)
   return parts.join(' · ')
-}
-
-function createMessage(role: AiChatMessage['role'], content: string, error = false, result?: Partial<AiChatResult> & { streaming?: boolean }): ChatItem {
-  return {
-    id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-    createdAt: Date.now(),
-    role,
-    content,
-    error,
-    reasoningContent: result?.reasoningContent,
-    usage: result?.usage,
-    streaming: result?.streaming,
-  }
-}
-
-function toHistoryRecord(message: ChatItem): AiHistoryRecord {
-  return {
-    id: message.id,
-    role: message.role as 'user' | 'assistant',
-    content: message.content,
-    reasoningContent: message.reasoningContent,
-    usage: message.usage,
-    error: message.error,
-    createdAt: message.createdAt,
-  }
-}
-
-function fromHistoryRecord(record: AiHistoryRecord): ChatItem {
-  return {
-    id: record.id,
-    role: record.role,
-    content: record.content,
-    reasoningContent: record.reasoningContent,
-    usage: record.usage,
-    error: record.error,
-    createdAt: record.createdAt,
-  }
-}
-
-function saveCurrentSessionDraft() {
-  currentSessionState.input = input.value
-}
-
-function bindSessionState(sessionId: string) {
-  currentSessionState = getAiSessionState(sessionId)
-  messages.value = currentSessionState.messages
-  input.value = currentSessionState.input
-  loading.value = currentSessionState.loading
-}
-
-function setSessionLoading(sessionId: string, value: boolean) {
-  const state = getAiSessionState(sessionId)
-  state.loading = value
-  if (props.sessionId === sessionId) loading.value = value
-}
-
-function syncVisibleSession(sessionId: string) {
-  if (props.sessionId !== sessionId) return
-  const state = getAiSessionState(sessionId)
-  messages.value = state.messages
-  loading.value = state.loading
-}
-
-async function loadHistory(sessionId = props.sessionId) {
-  try {
-    const records = await window.liteSSH.getAiSessionHistory(sessionId)
-    const state = getAiSessionState(sessionId)
-    const hasLiveMessages = state.loading || state.persisting || state.messages.some((message) => message.streaming)
-    if (!hasLiveMessages) {
-      state.messages.splice(0, state.messages.length, ...records.map(fromHistoryRecord))
-    } else if (state.messages.length === 0) {
-      state.messages.splice(0, 0, ...records.map(fromHistoryRecord))
-    }
-    syncVisibleSession(sessionId)
-  } catch (err: any) {
-    ElMessage.warning(err?.message || '加载 AI 历史记录失败')
-  }
 }
 
 async function copyText(text: string, key: string) {
@@ -359,27 +142,33 @@ async function copyText(text: string, key: string) {
 async function loadHistoryList() {
   try {
     historyList.value = await window.liteSSH.listAiSessionHistories()
+    historyListLoaded = true
   } catch {
     historyList.value = []
+    historyListLoaded = false
   }
+}
+
+async function ensureHistoryListLoaded(force = false) {
+  if (historyListLoaded && !force) return
+  await loadHistoryList()
 }
 
 async function loadHistorySession(sessionId: string) {
   try {
     const records = await window.liteSSH.getAiSessionHistory(sessionId)
-    messages.value = records.map(fromHistoryRecord)
+    messages.value = records.map((r) => ({
+      id: r.id,
+      role: r.role,
+      content: r.content,
+      reasoningContent: r.reasoningContent,
+      usage: r.usage,
+      error: r.error,
+      createdAt: r.createdAt,
+    }))
     showHistory.value = false
   } catch (err: any) {
     ElMessage.warning(err?.message || '加载 AI 历史记录失败')
-  }
-}
-
-async function persistMessage(sessionId: string, message: ChatItem) {
-  try {
-    await window.liteSSH.appendAiSessionHistory(sessionId, toHistoryRecord(message))
-    await loadHistoryList()
-  } catch (err) {
-    console.warn('Failed to persist AI message:', err)
   }
 }
 
@@ -392,8 +181,12 @@ async function ensureInitialLoad() {
       } catch (err: any) {
         ElMessage.warning(err?.message || '加载 AI 设置失败')
       }
-      await loadHistory(props.sessionId)
-      await loadHistoryList()
+      const history = await loadHistory(props.sessionId)
+      const state = getSessionState(props.sessionId)
+      if (state.messages.length === 0 && history.length > 0) {
+        state.messages.push(...history)
+      }
+      syncMessages(state.messages)
     })()
   }
   await initialLoadPromise
@@ -418,111 +211,28 @@ async function saveSettings() {
   showSettings.value = false
 }
 
-async function sendText(text: string): Promise<boolean> {
-  const sessionId = props.sessionId
-  const state = getAiSessionState(sessionId)
+async function handleSendText(text: string): Promise<boolean> {
   const content = text.trim()
   if (!content) return false
-  if (state.loading) {
-    ElMessage.warning('AI 正在回复，请稍后再发送')
-    return false
-  }
-
-  const userMessage = createMessage('user', content)
-  state.messages.push(userMessage)
-  syncVisibleSession(sessionId)
-  await persistMessage(sessionId, userMessage)
-  setSessionLoading(sessionId, true)
-
-  const chatMessages = state.messages
-    .filter((message) => !message.error && !message.streaming)
-    .map(({ role, content }) => ({ role, content }))
-  const assistantMessage = createMessage('assistant', '', false, { streaming: true })
-  state.messages.push(assistantMessage)
-  syncVisibleSession(sessionId)
-  const assistantIndex = state.messages.length - 1
-
-  const getAssistantMessage = () => state.messages[assistantIndex] || assistantMessage
-  const updateAssistantMessage = (patch: Partial<ChatItem>) => {
-    const current = getAssistantMessage()
-    state.messages.splice(assistantIndex, 1, { ...current, ...patch })
-    syncVisibleSession(sessionId)
-  }
-
-  try {
-    const requestId = `ai-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
-    activeStreamUnsubscribe = window.liteSSH.onAiChatStream(requestId, (payload: AiChatStreamPayload) => {
-      const current = getAssistantMessage()
-      if (payload.type === 'content') {
-        updateAssistantMessage({ content: current.content + payload.value })
-      } else if (payload.type === 'reasoning') {
-        updateAssistantMessage({ reasoningContent: (current.reasoningContent || '') + payload.value })
-      } else if (payload.type === 'usage') {
-        updateAssistantMessage({ usage: payload.value })
-      }
-    })
-
-    try {
-      const reply = await window.liteSSH.aiChatStream(requestId, chatMessages)
-      const current = getAssistantMessage()
-      updateAssistantMessage({
-        content: reply.content || current.content,
-        reasoningContent: reply.reasoningContent || current.reasoningContent,
-        usage: reply.usage || current.usage,
-      })
-    } finally {
-      activeStreamUnsubscribe?.()
-      activeStreamUnsubscribe = null
-    }
-  } catch (err: any) {
-    const current = getAssistantMessage()
-    if (!current.content && !current.reasoningContent) {
-      try {
-        const reply = await window.liteSSH.aiChat(chatMessages)
-        updateAssistantMessage({
-          content: reply.content,
-          reasoningContent: reply.reasoningContent,
-          usage: reply.usage,
-        })
-      } catch (fallbackErr: any) {
-        updateAssistantMessage({
-          content: fallbackErr?.message || err?.message || 'AI 请求失败',
-          error: true,
-        })
-      }
-    } else {
-      updateAssistantMessage({
-        content: `${current.content}\n\n${err?.message || 'AI 请求中断'}`,
-        error: true,
-      })
-    }
-  } finally {
-    updateAssistantMessage({ streaming: false })
-    const state = getAiSessionState(sessionId)
-    state.persisting = true
-    try {
-      await persistMessage(sessionId, getAssistantMessage())
-    } finally {
-      state.persisting = false
-      setSessionLoading(sessionId, false)
-    }
-  }
-  return true
+  loading.value = true
+  const result = await sendText(props.sessionId, content, syncMessages)
+  loading.value = getSessionState(props.sessionId).loading
+  return result
 }
 
 async function sendMessage() {
   if (!canSend.value) return
   const content = input.value.trim()
   input.value = ''
-  await sendText(content)
+  await handleSendText(content)
 }
 
-function clearMessages() {
-  const state = getAiSessionState(props.sessionId)
-  state.messages.splice(0, state.messages.length)
-  syncVisibleSession(props.sessionId)
-  window.liteSSH.clearAiSessionHistory(props.sessionId).catch(() => {})
-  loadHistoryList().catch(() => {})
+function handleClearMessages() {
+  clearMessages(props.sessionId, syncMessages)
+  historyListLoaded = false
+  if (showHistory.value) {
+    loadHistoryList().catch(() => {})
+  }
 }
 </script>
 
@@ -685,7 +395,7 @@ function clearMessages() {
         @keydown.meta.enter.prevent="sendMessage"
       />
       <div class="composer-actions">
-        <button type="button" class="ghost-btn" @click="clearMessages" title="清空对话">
+        <button type="button" class="ghost-btn" @click="handleClearMessages" title="清空对话">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/>
           </svg>

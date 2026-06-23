@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted, onBeforeUnmount } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage } from 'element-plus/es/components/message/index'
 import type { Connection, Group } from '../env.d.ts'
 
 const props = defineProps<{
@@ -53,12 +53,15 @@ const diagnoseState = ref<DiagnoseState>('idle')
 const diagnoseResult = ref<DiagnoseResult | null>(null)
 
 onMounted(async () => {
-  groups.value = await window.liteSSH.getGroups()
+  const groupsPromise = window.liteSSH.getGroups()
+  const passwordPromise = props.connection?.id
+    ? window.liteSSH.getConnectionPassword(props.connection.id)
+    : Promise.resolve(props.connection?.password || '')
+
+  const [loadedGroups, password] = await Promise.all([groupsPromise, passwordPromise])
+  groups.value = loadedGroups
 
   if (props.connection) {
-    const password = props.connection.id
-      ? await window.liteSSH.getConnectionPassword(props.connection.id)
-      : props.connection.password
     form.value = {
       name: props.connection.name,
       host: props.connection.host,

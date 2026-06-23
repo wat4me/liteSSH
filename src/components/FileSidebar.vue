@@ -11,6 +11,8 @@ import FileList from './FileList.vue'
 import TransferList from './TransferList.vue'
 import UploadConfirmModal from './UploadConfirmModal.vue'
 
+const fileListRef = ref<InstanceType<typeof FileList> | null>(null)
+
 const props = defineProps<{
   sessionId: string
   connectionName: string
@@ -194,6 +196,18 @@ async function handleRefresh() {
   refresh()
 }
 
+function toggleFileSearch() {
+  fileListRef.value?.toggleSearch()
+}
+
+function handleFileListKeydown(e: KeyboardEvent) {
+  if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
+    e.preventDefault()
+    e.stopPropagation()
+    toggleFileSearch()
+  }
+}
+
 async function handleToggleFollow() {
   await toggleFollowTerminalPath()
   saveCurrentState()
@@ -361,7 +375,7 @@ defineExpose({ handleTerminalCd, clearSessionState })
 </script>
 
 <template>
-  <div class="file-sidebar" @click="hideContextMenu" @dragover="onDragOver" @dragleave="onDragLeave" @drop="onDrop">
+  <div class="file-sidebar" @click="hideContextMenu" @dragover="onDragOver" @dragleave="onDragLeave" @drop="onDrop" @keydown="handleFileListKeydown" tabindex="0">
     <div v-if="isDragOver && currentPath" class="drag-overlay">
       <div class="drag-overlay-content">
         <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
@@ -429,6 +443,11 @@ defineExpose({ handleTerminalCd, clearSessionState })
             <polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
           </svg>
         </button>
+        <button class="sidebar-btn" @click="toggleFileSearch" title="搜索文件 (Ctrl+F)">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+          </svg>
+        </button>
       </div>
 
       <div class="sidebar-path" :class="{ editing: showPathInput }" @click="showPathInput || togglePathInput()">
@@ -452,6 +471,7 @@ defineExpose({ handleTerminalCd, clearSessionState })
       </div>
 
       <FileList
+        ref="fileListRef"
         :files="files"
         :current-path="currentPath"
         :loading="loading"

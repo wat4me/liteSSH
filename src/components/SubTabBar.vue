@@ -1,11 +1,26 @@
 <script setup lang="ts">
 import { Close, Plus } from '@element-plus/icons-vue'
 
-defineProps<{
+const props = defineProps<{
   sessions: { id: string; connectionName: string; tabNumber: number }[]
   activeSessionId: string | null
   connectionId: string
+  latencyMap?: Record<string, number> | null
+  latencyEnabled?: boolean
 }>()
+
+function formatLatency(ms: number): string {
+  if (ms < 0) return '✕'
+  if (ms < 1000) return `${Math.round(ms)}ms`
+  return `${(ms / 1000).toFixed(1)}s`
+}
+
+function latencyColor(ms: number): string {
+  if (ms < 0) return 'var(--danger)'
+  if (ms < 200) return 'var(--success)'
+  if (ms < 500) return '#e5a000'
+  return 'var(--danger)'
+}
 
 const emit = defineEmits<{
   (e: 'select', sessionId: string): void
@@ -25,6 +40,11 @@ const emit = defineEmits<{
         @click="emit('select', session.id)"
       >
         <span class="sub-tab-label">终端 {{ session.tabNumber }}</span>
+        <span
+          v-if="props.latencyEnabled && props.latencyMap && props.latencyMap[session.id] !== undefined"
+          class="sub-tab-latency"
+          :style="{ color: latencyColor(props.latencyMap[session.id]) }"
+        >{{ formatLatency(props.latencyMap[session.id]) }}</span>
         <button class="sub-tab-close" @click.stop="emit('close', session.id)">
           <el-icon :size="10"><Close /></el-icon>
         </button>
@@ -32,6 +52,9 @@ const emit = defineEmits<{
       <button class="sub-tab-add" @click="emit('add', connectionId)" title="新建窗口">
         <el-icon :size="12"><Plus /></el-icon>
       </button>
+    </div>
+    <div v-if="$slots.actions" class="sub-tab-actions">
+      <slot name="actions"></slot>
     </div>
   </div>
 </template>
@@ -54,6 +77,7 @@ const emit = defineEmits<{
   align-items: center;
   gap: 2px;
   overflow: hidden;
+  min-width: 0;
 }
 
 .sub-tab {
@@ -86,6 +110,13 @@ const emit = defineEmits<{
   font-weight: 500;
   min-width: 8px;
   text-align: center;
+}
+
+.sub-tab-latency {
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.85;
+  padding: 0 2px;
 }
 
 .sub-tab-close {
@@ -131,5 +162,13 @@ const emit = defineEmits<{
   color: var(--accent);
   border-color: var(--accent);
   background: var(--accent-bg);
+}
+
+.sub-tab-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px 0 12px;
+  flex-shrink: 0;
 }
 </style>

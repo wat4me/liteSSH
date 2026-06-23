@@ -1,5 +1,8 @@
 import { createApp } from 'vue'
-import { ElMessage, ElMessageBox, ElTooltip, ElIcon } from 'element-plus'
+import { ElMessage } from 'element-plus/es/components/message/index'
+import { ElMessageBox } from 'element-plus/es/components/message-box/index'
+import { ElTooltip } from 'element-plus/es/components/tooltip/index'
+import { ElIcon } from 'element-plus/es/components/icon/index'
 
 // On-demand component styles (replaces ~200KB element-plus/dist/index.css)
 import 'element-plus/es/components/base/style/css'

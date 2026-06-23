@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { defineAsyncComponent, ref, computed, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
 import { Close, Plus } from '@element-plus/icons-vue'
-import SettingsPanel from './SettingsPanel.vue'
 import type { Connection } from '../env.d.ts'
+
+const SettingsPanel = defineAsyncComponent(() => import('./SettingsPanel.vue'))
 
 const HOME_ID = '__home__'
 
@@ -23,6 +24,9 @@ const emit = defineEmits<{
 
 const showSettings = ref(false)
 const showQuickConnect = ref(false)
+const quickConnectWrapperRef = ref<HTMLElement | null>(null)
+const quickConnectDropdownRef = ref<HTMLElement | null>(null)
+const quickConnectDropdownStyle = ref<Record<string, string>>({})
 const isHomeActive = computed(() => props.activeGroupId === HOME_ID)
 
 function formatLatency(ms: number): string {
@@ -37,6 +41,70 @@ function latencyColor(ms: number): string {
   if (ms < 500) return '#e5a000'
   return 'var(--danger)'
 }
+
+async function updateQuickConnectDropdownPosition() {
+  if (!showQuickConnect.value) return
+
+  await nextTick()
+
+  const anchor = quickConnectWrapperRef.value
+  const dropdown = quickConnectDropdownRef.value
+  if (!anchor || !dropdown) return
+
+  const anchorRect = anchor.getBoundingClientRect()
+  const dropdownWidth = dropdown.offsetWidth || 320
+  const dropdownHeight = dropdown.offsetHeight || 0
+  const viewportWidth = window.innerWidth
+  const viewportHeight = window.innerHeight
+  const margin = 8
+  const gap = 2
+
+  const minLeftOffset = margin - anchorRect.left
+  const maxLeftOffset = viewportWidth - margin - anchorRect.left - dropdownWidth
+  const leftOffset = Math.min(Math.max(0, minLeftOffset), maxLeftOffset)
+
+  const spaceAbove = anchorRect.top - margin
+  const spaceBelow = viewportHeight - anchorRect.bottom - margin
+  const openUpwards = dropdownHeight > spaceBelow && spaceAbove > spaceBelow
+  const availableHeight = Math.max(0, Math.floor(openUpwards ? spaceAbove : spaceBelow))
+
+  quickConnectDropdownStyle.value = {
+    left: `${leftOffset}px`,
+    right: 'auto',
+    top: openUpwards ? 'auto' : `${anchorRect.height + gap}px`,
+    bottom: openUpwards ? `${anchorRect.height + gap}px` : 'auto',
+    maxHeight: `${availableHeight}px`,
+  }
+}
+
+function handleViewportChange() {
+  void updateQuickConnectDropdownPosition()
+}
+
+watch(showQuickConnect, (visible) => {
+  if (visible) {
+    void updateQuickConnectDropdownPosition()
+    return
+  }
+  quickConnectDropdownStyle.value = {}
+})
+
+watch(
+  () => props.recentConnections.length,
+  () => {
+    if (showQuickConnect.value) {
+      void updateQuickConnectDropdownPosition()
+    }
+  },
+)
+
+onMounted(() => {
+  window.addEventListener('resize', handleViewportChange)
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('resize', handleViewportChange)
+})
 </script>
 
 <template>
@@ -77,7 +145,7 @@ function latencyColor(ms: number): string {
       </div>
     </div>
 
-    <div class="quick-connect-wrapper">
+    <div ref="quickConnectWrapperRef" class="quick-connect-wrapper">
       <button
         class="tab-add-btn"
         :class="{ active: showQuickConnect }"
@@ -87,7 +155,13 @@ function latencyColor(ms: number): string {
         <el-icon :size="14"><Plus /></el-icon>
       </button>
       <div v-if="showQuickConnect" class="settings-overlay" @click="showQuickConnect = false"></div>
-      <div v-if="showQuickConnect" class="quick-connect-dropdown" @click.stop>
+      <div
+        v-if="showQuickConnect"
+        ref="quickConnectDropdownRef"
+        class="quick-connect-dropdown"
+        :style="quickConnectDropdownStyle"
+        @click.stop
+      >
         <div class="quick-connect-title">最近连接</div>
         <button
           v-for="connection in recentConnections"
@@ -363,14 +437,17 @@ function latencyColor(ms: number): string {
 .quick-connect-dropdown {
   position: absolute;
   top: calc(100% + 2px);
-  right: 0;
+  left: 0;
   z-index: 10000;
   width: 320px;
+  max-width: calc(100vw - 16px);
   padding: 8px;
   background: var(--bg-primary);
   border: 1px solid var(--border-color);
   border-radius: 10px;
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.28);
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .quick-connect-title {
