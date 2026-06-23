@@ -1,6 +1,5 @@
 import { app, safeStorage } from 'electron'
-import { existsSync, mkdirSync } from 'fs'
-import { readFile, writeFile } from 'fs/promises'
+import { mkdir, readFile, writeFile } from 'fs/promises'
 import { join, dirname } from 'path'
 import { v4 as uuidv4 } from 'uuid'
 
@@ -13,6 +12,7 @@ export interface Connection {
   password: string
   encrypted?: boolean
   privateKey?: string
+  privateKeyEncrypted?: boolean
   group?: string
   keepaliveInterval?: number
   x11Forwarding?: boolean
@@ -37,6 +37,7 @@ export class CredentialStore {
   private connections: Connection[] = []
   private groups: Group[] = []
   private initialized = false
+  private initPromise: Promise<void> | null = null
   private decryptedCache: Map<string, { value: string; ts: number }> = new Map()
   private readonly CACHE_TTL_MS = 5 * 60 * 1000
 
@@ -48,55 +49,58 @@ export class CredentialStore {
 
   async init(): Promise<void> {
     if (this.initialized) return
-    await this.load()
-    this.initialized = true
+    if (!this.initPromise) {
+      this.initPromise = this.load().then(() => {
+        this.initialized = true
+      })
+    }
+    await this.initPromise
   }
 
-  private encryptPassword(password: string): string {
-    if (!password) return password
+  private encrypt(value: string): string {
+    if (!value) return value
     if (safeStorage.isEncryptionAvailable()) {
-      const encrypted = safeStorage.encryptString(password)
+      const encrypted = safeStorage.encryptString(value)
       return encrypted.toString('base64')
     }
-    return password
+    return value
   }
 
-  private decryptPassword(password: string, encrypted?: boolean): string {
-    if (!password) return password
+  private decrypt(value: string, encrypted?: boolean): string {
+    if (!value) return value
     if (encrypted && safeStorage.isEncryptionAvailable()) {
       try {
-        const buffer = Buffer.from(password, 'base64')
+        const buffer = Buffer.from(value, 'base64')
         return safeStorage.decryptString(buffer)
       } catch {
-        console.warn('Failed to decrypt password, returning empty string')
+        console.warn('Failed to decrypt value, returning empty string')
         return ''
       }
     }
-    return password
+    return value
   }
 
   private async load(): Promise<void> {
     try {
-      if (existsSync(this.connectionsPath)) {
-        const data = await readFile(this.connectionsPath, 'utf-8')
-        this.connections = JSON.parse(data)
-      }
+      const data = await readFile(this.connectionsPath, 'utf-8')
+      this.connections = JSON.parse(data)
     } catch {
       this.connections = []
     }
 
     try {
-      if (existsSync(this.groupsPath)) {
-        const data = await readFile(this.groupsPath, 'utf-8')
-        this.groups = JSON.parse(data)
-      }
+      const data = await readFile(this.groupsPath, 'utf-8')
+      this.groups = JSON.parse(data)
     } catch {
       this.groups = []
     }
 
-    this.migrateGroupField()
+    await this.migrateGroupField()
     if (this.needsPasswordMigration()) {
       await this.migratePasswords()
+    }
+    if (this.needsPrivateKeyMigration()) {
+      await this.migratePrivateKeys()
     }
   }
 
@@ -108,7 +112,7 @@ export class CredentialStore {
     let migrated = false
     for (const conn of this.connections) {
       if (!conn.encrypted && conn.password) {
-        conn.password = this.encryptPassword(conn.password)
+        conn.password = this.encrypt(conn.password)
         conn.encrypted = true
         migrated = true
       }
@@ -118,7 +122,25 @@ export class CredentialStore {
     }
   }
 
-  private migrateGroupField() {
+  private needsPrivateKeyMigration(): boolean {
+    return this.connections.some(c => c.privateKey && !c.privateKeyEncrypted)
+  }
+
+  private async migratePrivateKeys(): Promise<void> {
+    let migrated = false
+    for (const conn of this.connections) {
+      if (!conn.privateKeyEncrypted && conn.privateKey) {
+        conn.privateKey = this.encrypt(conn.privateKey)
+        conn.privateKeyEncrypted = true
+        migrated = true
+      }
+    }
+    if (migrated) {
+      await this.saveConnections()
+    }
+  }
+
+  private async migrateGroupField() {
     let migrated = false
     const nameToId: Record<string, string> = {}
 
@@ -146,17 +168,13 @@ export class CredentialStore {
     }
 
     if (migrated) {
-      this.saveConnections()
-      this.saveGroups()
+      await Promise.all([this.saveConnections(), this.saveGroups()])
     }
   }
 
   private async saveConnections(): Promise<void> {
     try {
-      const dir = dirname(this.connectionsPath)
-      if (!existsSync(dir)) {
-        mkdirSync(dir, { recursive: true })
-      }
+      await mkdir(dirname(this.connectionsPath), { recursive: true })
       await writeFile(this.connectionsPath, JSON.stringify(this.connections, null, 2), 'utf-8')
     } catch (err) {
       console.error('Failed to save connections:', err)
@@ -165,10 +183,7 @@ export class CredentialStore {
 
   private async saveGroups(): Promise<void> {
     try {
-      const dir = dirname(this.groupsPath)
-      if (!existsSync(dir)) {
-        mkdirSync(dir, { recursive: true })
-      }
+      await mkdir(dirname(this.groupsPath), { recursive: true })
       await writeFile(this.groupsPath, JSON.stringify(this.groups, null, 2), 'utf-8')
     } catch (err) {
       console.error('Failed to save groups:', err)
@@ -187,7 +202,9 @@ export class CredentialStore {
     return this.connections.map(conn => ({
       ...conn,
       password: this.decryptCached(conn.id),
-      encrypted: false
+      privateKey: conn.privateKey ? this.decrypt(conn.privateKey, conn.privateKeyEncrypted) : undefined,
+      encrypted: false,
+      privateKeyEncrypted: false
     }))
   }
 
@@ -202,7 +219,8 @@ export class CredentialStore {
     if (!conn) return undefined
     return {
       ...conn,
-      password: this.decryptCached(conn.id)
+      password: this.decryptCached(conn.id),
+      privateKey: conn.privateKey ? this.decrypt(conn.privateKey, conn.privateKeyEncrypted) : undefined
     }
   }
 
@@ -226,7 +244,7 @@ export class CredentialStore {
     if (entry) {
       this.decryptedCache.delete(connectionId)
     }
-    const decrypted = this.decryptPassword(conn.password, conn.encrypted)
+    const decrypted = this.decrypt(conn.password, conn.encrypted)
     this.decryptedCache.set(connectionId, { value: decrypted, ts: Date.now() })
     return decrypted
   }
@@ -237,8 +255,11 @@ export class CredentialStore {
 
     const encryptedConn = {
       ...conn,
-      password: this.encryptPassword(conn.password),
-      encrypted: true
+      password: this.encrypt(conn.password),
+      encrypted: true,
+      ...(conn.privateKey !== undefined
+        ? { privateKey: this.encrypt(conn.privateKey), privateKeyEncrypted: true }
+        : {}),
     }
 
     if (conn.id) {

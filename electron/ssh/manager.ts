@@ -3,6 +3,7 @@ import * as fs from 'fs'
 import * as net from 'net'
 import * as path from 'path'
 import { v4 as uuidv4 } from 'uuid'
+import { KnownHostsStore } from './knownHosts'
 
 interface Connection {
   id: string
@@ -15,6 +16,7 @@ interface Connection {
   x11Forwarding?: boolean
   x11Host?: string
   x11Display?: number
+  privateKey?: string
 }
 
 interface Session {
@@ -49,10 +51,21 @@ interface ActiveTransfer {
   cancelled: boolean
 }
 
+export interface HostKeyVerifyResult {
+  accepted: boolean
+  fingerprint: string
+  error?: string
+}
+
 export class SSHManager {
   private sessions: Map<string, Session> = new Map()
   private activeTransfers: Map<string, ActiveTransfer> = new Map()
   private decoders: Map<string, TextDecoder> = new Map()
+  private knownHosts: KnownHostsStore
+
+  constructor(knownHosts?: KnownHostsStore) {
+    this.knownHosts = knownHosts ?? new KnownHostsStore()
+  }
 
   async connect(connection: Connection, callbacks: SSHCallbacks): Promise<string> {
     let useX11 = connection.x11Forwarding === true
@@ -82,6 +95,8 @@ export class SSHManager {
         reject(err)
       }
 
+      let hostKeyError: string | null = null
+
       const config: ConnectConfig = {
         host: connection.host,
         port: connection.port,
@@ -94,6 +109,14 @@ export class SSHManager {
           : { password: connection.password }),
         readyTimeout: 15000,
         keepaliveInterval: connection.keepaliveInterval ?? 30000,
+        hostVerifier: (key: Buffer) => {
+          const result = this.knownHosts.verifySync(connection.host, connection.port, key)
+          if (!result.accepted) {
+            hostKeyError = result.error || 'Host key verification failed'
+            return false
+          }
+          return true
+        },
       }
       const x11Sockets = new Set<net.Socket>()
 
@@ -160,8 +183,9 @@ export class SSHManager {
       client.on('error', (err) => {
         this.destroyX11Sockets(x11Sockets)
         this.sessions.delete(sessionId)
-        callbacks.onError(sessionId, err.message)
-        safeReject(new Error(`Connection error: ${err.message}`))
+        const errorMsg = hostKeyError || err.message
+        callbacks.onError(sessionId, errorMsg)
+        safeReject(new Error(`Connection error: ${errorMsg}`))
       })
 
       client.on('close', () => {

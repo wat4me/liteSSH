@@ -1,6 +1,5 @@
-import { app } from 'electron'
-import { existsSync, mkdirSync } from 'fs'
-import { readFile, writeFile } from 'fs/promises'
+import { app, safeStorage } from 'electron'
+import { mkdir, readFile, writeFile } from 'fs/promises'
 import { join, dirname } from 'path'
 
 const DEFAULT_AI_SYSTEM_PROMPT = [
@@ -17,6 +16,7 @@ export class SettingsStore {
   private settings: Record<string, any> = {}
   private readonly recentConnectionsLimit = 5
   private initialized = false
+  private initPromise: Promise<void> | null = null
 
   constructor() {
     const userData = app.getPath('userData')
@@ -25,27 +25,46 @@ export class SettingsStore {
 
   async init(): Promise<void> {
     if (this.initialized) return
-    await this.load()
-    this.initialized = true
+    if (!this.initPromise) {
+      this.initPromise = this.load().then(() => {
+        this.initialized = true
+      })
+    }
+    await this.initPromise
   }
 
   private async load(): Promise<void> {
     try {
-      if (existsSync(this.settingsPath)) {
-        const data = await readFile(this.settingsPath, 'utf-8')
-        this.settings = JSON.parse(data)
-      }
+      const data = await readFile(this.settingsPath, 'utf-8')
+      this.settings = JSON.parse(data)
     } catch {
       this.settings = {}
+    }
+
+    if (this.needsApiKeyMigration()) {
+      await this.migrateApiKey()
+    }
+  }
+
+  private needsApiKeyMigration(): boolean {
+    const ai = this.settings.ai
+    if (!ai || typeof ai !== 'object') return false
+    return typeof ai.apiKey === 'string' && ai.apiKey && !ai.apiKeyEncrypted
+  }
+
+  private async migrateApiKey(): Promise<void> {
+    const ai = this.settings.ai
+    if (!ai || typeof ai !== 'object') return
+    if (typeof ai.apiKey === 'string' && ai.apiKey && !ai.apiKeyEncrypted) {
+      ai.apiKey = this.encrypt(ai.apiKey)
+      ai.apiKeyEncrypted = true
+      await this.save()
     }
   }
 
   private async save(): Promise<void> {
     try {
-      const dir = dirname(this.settingsPath)
-      if (!existsSync(dir)) {
-        mkdirSync(dir, { recursive: true })
-      }
+      await mkdir(dirname(this.settingsPath), { recursive: true })
       await writeFile(this.settingsPath, JSON.stringify(this.settings, null, 2), 'utf-8')
     } catch (err) {
       console.error('Failed to save settings:', err)
@@ -166,6 +185,27 @@ export class SettingsStore {
     await this.save()
   }
 
+  private encrypt(value: string): string {
+    if (!value) return value
+    if (safeStorage.isEncryptionAvailable()) {
+      return safeStorage.encryptString(value).toString('base64')
+    }
+    return value
+  }
+
+  private decrypt(value: string): string {
+    if (!value) return value
+    if (safeStorage.isEncryptionAvailable()) {
+      try {
+        return safeStorage.decryptString(Buffer.from(value, 'base64'))
+      } catch {
+        console.warn('Failed to decrypt value, returning empty string')
+        return ''
+      }
+    }
+    return value
+  }
+
   getAiSettings(): {
     baseUrl: string
     model: string
@@ -174,10 +214,12 @@ export class SettingsStore {
     temperature: number
   } {
     const ai = this.settings.ai || {}
+    const rawApiKey = typeof ai.apiKey === 'string' ? ai.apiKey : ''
+    const apiKey = ai.apiKeyEncrypted ? this.decrypt(rawApiKey) : rawApiKey
     return {
       baseUrl: typeof ai.baseUrl === 'string' && ai.baseUrl.trim() ? ai.baseUrl : 'https://api.openai.com/v1',
       model: typeof ai.model === 'string' && ai.model.trim() ? ai.model : 'gpt-4o-mini',
-      apiKey: typeof ai.apiKey === 'string' ? ai.apiKey : '',
+      apiKey,
       systemPrompt: typeof ai.systemPrompt === 'string' && ai.systemPrompt !== LEGACY_AI_SYSTEM_PROMPT
         ? ai.systemPrompt
         : DEFAULT_AI_SYSTEM_PROMPT,
@@ -195,7 +237,8 @@ export class SettingsStore {
     this.settings.ai = {
       baseUrl: settings.baseUrl.trim(),
       model: settings.model.trim(),
-      apiKey: settings.apiKey,
+      apiKey: this.encrypt(settings.apiKey),
+      apiKeyEncrypted: safeStorage.isEncryptionAvailable() && !!settings.apiKey,
       systemPrompt: settings.systemPrompt,
       temperature: Math.max(0, Math.min(2, settings.temperature)),
     }

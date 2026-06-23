@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 
 contextBridge.exposeInMainWorld('liteSSH', {
+  getAppBootstrap: () => ipcRenderer.invoke('app:getBootstrap'),
   getConnections: () => ipcRenderer.invoke('store:getConnections'),
   saveConnection: (conn: any) => ipcRenderer.invoke('store:saveConnection', conn),
   deleteConnection: (id: string) => ipcRenderer.invoke('store:deleteConnection', id),
@@ -53,12 +54,16 @@ contextBridge.exposeInMainWorld('liteSSH', {
   sshResize: (sessionId: string, cols: number, rows: number) => ipcRenderer.send('ssh:resize', sessionId, cols, rows),
   sshTestConnection: (connectionId: string) => ipcRenderer.invoke('ssh:testConnection', connectionId),
   sshTestConnectionParams: (params: { host: string; port: number; username: string; password: string; privateKey?: string }) => ipcRenderer.invoke('ssh:testConnectionParams', params),
-  sshDiagnoseConnectionParams: (params: { host: string; port: number; username: string; password: string; privateKey?: string }) =>
+sshDiagnoseConnectionParams: (params: { host: string; port: number; username: string; password: string; privateKey?: string }) =>
     ipcRenderer.invoke('ssh:diagnoseConnectionParams', params),
+
+  sshRemoveHostKey: (host: string, port: number) => ipcRenderer.invoke('ssh:removeHostKey', host, port),
+  sshGetHostKeyFingerprint: (host: string, port: number) => ipcRenderer.invoke('ssh:getHostKeyFingerprint', host, port),
 
   sshStartLatencyMonitor: (sessionId: string) => ipcRenderer.invoke('ssh:startLatencyMonitor', sessionId),
   sshStopLatencyMonitor: (sessionId: string) => ipcRenderer.invoke('ssh:stopLatencyMonitor', sessionId),
   sshMeasureLatency: (sessionId: string) => ipcRenderer.invoke('ssh:measureLatency', sessionId),
+  sshExec: (sessionId: string, command: string, timeoutMs?: number) => ipcRenderer.invoke('ssh:exec', sessionId, command, timeoutMs),
 
   getMonitorEnabled: () => ipcRenderer.invoke('settings:getMonitorEnabled'),
   setMonitorEnabled: (enabled: boolean) => ipcRenderer.invoke('settings:setMonitorEnabled', enabled),
