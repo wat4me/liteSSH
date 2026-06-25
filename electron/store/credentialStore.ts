@@ -29,13 +29,25 @@ export interface Group {
   isDefault: boolean
 }
 
+export interface SavedCredential {
+  id: string
+  name: string
+  username: string
+  password: string
+  encrypted?: boolean
+  createdAt: number
+  updatedAt: number
+}
+
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 export class CredentialStore {
   private connectionsPath: string
   private groupsPath: string
+  private savedCredentialsPath: string
   private connections: Connection[] = []
   private groups: Group[] = []
+  private savedCredentials: SavedCredential[] = []
   private initialized = false
   private initPromise: Promise<void> | null = null
   private decryptedCache: Map<string, { value: string; ts: number }> = new Map()
@@ -45,6 +57,7 @@ export class CredentialStore {
     const userData = app.getPath('userData')
     this.connectionsPath = join(userData, 'connections.json')
     this.groupsPath = join(userData, 'groups.json')
+    this.savedCredentialsPath = join(userData, 'saved-credentials.json')
   }
 
   async init(): Promise<void> {
@@ -95,12 +108,40 @@ export class CredentialStore {
       this.groups = []
     }
 
+    try {
+      const data = await readFile(this.savedCredentialsPath, 'utf-8')
+      this.savedCredentials = JSON.parse(data)
+    } catch {
+      this.savedCredentials = []
+    }
+
     await this.migrateGroupField()
     if (this.needsPasswordMigration()) {
       await this.migratePasswords()
     }
     if (this.needsPrivateKeyMigration()) {
       await this.migratePrivateKeys()
+    }
+    if (this.needsSavedCredentialMigration()) {
+      await this.migrateSavedCredentials()
+    }
+  }
+
+  private needsSavedCredentialMigration(): boolean {
+    return this.savedCredentials.some(c => c.password && !c.encrypted)
+  }
+
+  private async migrateSavedCredentials(): Promise<void> {
+    let migrated = false
+    for (const credential of this.savedCredentials) {
+      if (!credential.encrypted && credential.password) {
+        credential.password = this.encrypt(credential.password)
+        credential.encrypted = true
+        migrated = true
+      }
+    }
+    if (migrated) {
+      await this.saveSavedCredentials()
     }
   }
 
@@ -190,8 +231,21 @@ export class CredentialStore {
     }
   }
 
+  private async saveSavedCredentials(): Promise<void> {
+    try {
+      await mkdir(dirname(this.savedCredentialsPath), { recursive: true })
+      await writeFile(this.savedCredentialsPath, JSON.stringify(this.savedCredentials, null, 2), 'utf-8')
+    } catch (err) {
+      console.error('Failed to save saved credentials:', err)
+    }
+  }
+
   private stripPassword(conn: Connection): Connection {
     return { ...conn, password: '' }
+  }
+
+  private stripSavedCredentialPassword(credential: SavedCredential): SavedCredential {
+    return { ...credential, password: '' }
   }
 
   getConnections(): Connection[] {
@@ -300,6 +354,63 @@ export class CredentialStore {
     return this.connections[idx]
   }
 
+  getSavedCredentials(): SavedCredential[] {
+    return this.savedCredentials
+      .map(credential => this.stripSavedCredentialPassword(credential))
+      .sort((a, b) => b.updatedAt - a.updatedAt)
+  }
+
+  getSavedCredentialPassword(id: string): string | undefined {
+    const credential = this.savedCredentials.find((c) => c.id === id)
+    if (!credential) return undefined
+    return this.decrypt(credential.password, credential.encrypted)
+  }
+
+  async saveSavedCredential(credential: Partial<SavedCredential> & { name: string; username: string; password: string }): Promise<SavedCredential> {
+    const now = Date.now()
+    const encryptedCredential = {
+      ...credential,
+      password: this.encrypt(credential.password),
+      encrypted: true,
+    }
+    let saved: SavedCredential
+
+    if (credential.id) {
+      const idx = this.savedCredentials.findIndex((c) => c.id === credential.id)
+      if (idx === -1) {
+        throw new Error('Saved credential not found')
+      }
+      this.savedCredentials[idx] = {
+        ...this.savedCredentials[idx],
+        ...encryptedCredential,
+        updatedAt: now,
+      } as SavedCredential
+      saved = this.savedCredentials[idx]
+    } else {
+      saved = {
+        ...encryptedCredential,
+        id: uuidv4(),
+        createdAt: now,
+        updatedAt: now,
+      } as SavedCredential
+      this.savedCredentials.push(saved)
+    }
+
+    await this.saveSavedCredentials()
+    return {
+      ...saved,
+      password: ''
+    }
+  }
+
+  async deleteSavedCredential(id: string): Promise<boolean> {
+    const idx = this.savedCredentials.findIndex((c) => c.id === id)
+    if (idx === -1) return false
+    this.savedCredentials.splice(idx, 1)
+    await this.saveSavedCredentials()
+    return true
+  }
+
   async deleteConnection(id: string): Promise<boolean> {
     const idx = this.connections.findIndex((c) => c.id === id)
     if (idx === -1) return false
@@ -374,9 +485,9 @@ export class CredentialStore {
     await this.saveGroups()
   }
 
-  async setDefaultGroup(id: string): Promise<void> {
+  async setDefaultGroup(id: string | null): Promise<void> {
     for (const g of this.groups) {
-      g.isDefault = g.id === id
+      g.isDefault = id !== null && g.id === id
     }
     await this.saveGroups()
   }

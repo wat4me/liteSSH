@@ -16,12 +16,16 @@ declare global {
       updateConnectionGroup: (id: string, groupId: string | undefined) => Promise<boolean>
       isEncryptionAvailable: () => Promise<boolean>
       getConnectionPassword: (id: string) => Promise<string>
+      getSavedCredentials: () => Promise<SavedCredential[]>
+      getSavedCredentialPassword: (id: string) => Promise<string>
+      saveSavedCredential: (credential: Partial<SavedCredential> & { name: string; username: string; password: string }) => Promise<SavedCredential>
+      deleteSavedCredential: (id: string) => Promise<boolean>
 
       getGroups: () => Promise<Group[]>
       saveGroup: (group: Partial<Group> & { name: string }) => Promise<Group>
       deleteGroup: (id: string) => Promise<boolean>
       reorderGroups: (ids: string[]) => Promise<void>
-      setDefaultGroup: (id: string) => Promise<void>
+      setDefaultGroup: (id: string | null) => Promise<void>
 
       getDownloadPath: () => Promise<string>
       setDownloadPath: (dirPath: string) => Promise<void>
@@ -164,6 +168,15 @@ export interface Group {
   name: string
   order: number
   isDefault: boolean
+}
+
+export interface SavedCredential {
+  id: string
+  name: string
+  username: string
+  password: string
+  createdAt: number
+  updatedAt: number
 }
 
 export interface FileEntry {

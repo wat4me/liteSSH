@@ -8,12 +8,16 @@ contextBridge.exposeInMainWorld('liteSSH', {
   updateConnectionGroup: (id: string, groupId: string | undefined) => ipcRenderer.invoke('store:updateConnectionGroup', id, groupId),
   isEncryptionAvailable: () => ipcRenderer.invoke('store:isEncryptionAvailable'),
   getConnectionPassword: (id: string) => ipcRenderer.invoke('store:getConnectionPassword', id),
+  getSavedCredentials: () => ipcRenderer.invoke('store:getSavedCredentials'),
+  getSavedCredentialPassword: (id: string) => ipcRenderer.invoke('store:getSavedCredentialPassword', id),
+  saveSavedCredential: (credential: any) => ipcRenderer.invoke('store:saveSavedCredential', credential),
+  deleteSavedCredential: (id: string) => ipcRenderer.invoke('store:deleteSavedCredential', id),
 
   getGroups: () => ipcRenderer.invoke('store:getGroups'),
   saveGroup: (group: any) => ipcRenderer.invoke('store:saveGroup', group),
   deleteGroup: (id: string) => ipcRenderer.invoke('store:deleteGroup', id),
   reorderGroups: (ids: string[]) => ipcRenderer.invoke('store:reorderGroups', ids),
-  setDefaultGroup: (id: string) => ipcRenderer.invoke('store:setDefaultGroup', id),
+  setDefaultGroup: (id: string | null) => ipcRenderer.invoke('store:setDefaultGroup', id),
 
   getDownloadPath: () => ipcRenderer.invoke('settings:getDownloadPath'),
   setDownloadPath: (dirPath: string) => ipcRenderer.invoke('settings:setDownloadPath', dirPath),

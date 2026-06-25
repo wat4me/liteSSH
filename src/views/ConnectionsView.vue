@@ -173,7 +173,7 @@ async function onDeleteGroup(groupId: string) {
   } catch {}
 }
 
-async function onSetDefault(groupId: string) {
+async function onSetDefault(groupId: string | null) {
   await window.liteSSH.setDefaultGroup(groupId)
   await loadData()
 }
@@ -210,6 +210,9 @@ async function handleImport() {
     if (result) {
       ElMessage.success(`成功导入 ${result.imported}/${result.total} 个连接`)
       await loadData()
+      if (activeGroupId.value && !groups.value.some((group) => group.id === activeGroupId.value) && activeGroupId.value !== UNGROUPED_ID) {
+        selectInitialGroup()
+      }
     }
   } catch (err: any) {
     ElMessage.error(err.message || '导入失败')

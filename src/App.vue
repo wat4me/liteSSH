@@ -752,15 +752,12 @@ onBeforeUnmount(() => {
   flex: 1;
   position: relative;
   overflow: hidden;
-}
-
-.terminal-container.split-horizontal {
   display: flex;
   flex-direction: column;
+  min-height: 0;
 }
 
 .terminal-container.split-vertical {
-  display: flex;
   flex-direction: row;
 }
 

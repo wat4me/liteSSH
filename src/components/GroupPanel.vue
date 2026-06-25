@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { ref } from 'vue'
-import { Star, Edit, Delete, Plus } from '@element-plus/icons-vue'
+import { computed, ref } from 'vue'
+import { ArrowDown, ArrowRight, Star, Edit, Delete, Plus } from '@element-plus/icons-vue'
 import type { Connection, Group } from '../env.d.ts'
 
 const UNGROUPED_ID = '__ungrouped__'
@@ -18,7 +18,7 @@ const emit = defineEmits<{
   (e: 'addConnection'): void
   (e: 'rename', group: Group): void
   (e: 'delete', groupId: string): void
-  (e: 'setDefault', groupId: string): void
+  (e: 'setDefault', groupId: string | null): void
   (e: 'reorder', orderedIds: string[]): void
   (e: 'connect', connectionId: string): void
   (e: 'moveConnection', connectionId: string, groupId: string | null): void
@@ -30,12 +30,79 @@ const dragIndex = ref<number | null>(null)
 const dropIndex = ref<number | null>(null)
 const dragConnId = ref<string | null>(null)
 const dropTargetGroupId = ref<string | null>(null)
+const groupSearchQuery = ref('')
+const collapsedGroupIds = ref<Set<string>>(new Set())
+const ungroupedCollapsed = ref(false)
+
+const normalizedGroupSearchQuery = computed(() => groupSearchQuery.value.trim().toLowerCase())
+
+const visibleGroups = computed(() => {
+  const query = normalizedGroupSearchQuery.value
+  if (!query) return props.groups
+  return props.groups.filter((group) => {
+    if (group.name.toLowerCase().includes(query)) return true
+    return getConnectionsForGroup(group.id).some((conn) => matchesConnection(conn, query))
+  })
+})
+
+const visibleUngroupedConnections = computed(() => {
+  const query = normalizedGroupSearchQuery.value
+  const connections = getConnectionsForGroup(UNGROUPED_ID)
+  if (!query || '未分组'.includes(query)) return connections
+  return connections.filter((conn) => matchesConnection(conn, query))
+})
+
+const showUngrouped = computed(() => {
+  const query = normalizedGroupSearchQuery.value
+  return !query || '未分组'.includes(query) || visibleUngroupedConnections.value.length > 0
+})
 
 function getConnectionsForGroup(groupId: string): Connection[] {
   if (groupId === UNGROUPED_ID) {
     return props.connections.filter((c) => !c.group)
   }
   return props.connections.filter((c) => c.group === groupId)
+}
+
+function getGroupIndex(groupId: string): number {
+  return props.groups.findIndex((g) => g.id === groupId)
+}
+
+function getVisibleConnectionsForGroup(groupId: string): Connection[] {
+  const query = normalizedGroupSearchQuery.value
+  const connections = getConnectionsForGroup(groupId)
+  if (!query) return connections
+  return connections.filter((conn) => matchesConnection(conn, query))
+}
+
+function matchesConnection(conn: Connection, query: string): boolean {
+  return (
+    conn.name.toLowerCase().includes(query) ||
+    conn.host.toLowerCase().includes(query) ||
+    conn.username.toLowerCase().includes(query)
+  )
+}
+
+function isGroupCollapsed(groupId: string): boolean {
+  return !normalizedGroupSearchQuery.value && collapsedGroupIds.value.has(groupId)
+}
+
+function toggleGroupCollapsed(groupId: string) {
+  const next = new Set(collapsedGroupIds.value)
+  if (next.has(groupId)) {
+    next.delete(groupId)
+  } else {
+    next.add(groupId)
+  }
+  collapsedGroupIds.value = next
+}
+
+function isUngroupedCollapsed(): boolean {
+  return !normalizedGroupSearchQuery.value && ungroupedCollapsed.value
+}
+
+function toggleUngroupedCollapsed() {
+  ungroupedCollapsed.value = !ungroupedCollapsed.value
 }
 
 function startRename(group: Group) {
@@ -55,12 +122,12 @@ function cancelRename() {
 }
 
 function onDragStart(index: number) {
-  if (dragConnId.value) return
+  if (dragConnId.value || index < 0) return
   dragIndex.value = index
 }
 
 function onDragOver(e: DragEvent, index: number) {
-  if (dragConnId.value) return
+  if (dragConnId.value || index < 0) return
   e.preventDefault()
   dropIndex.value = index
 }
@@ -71,7 +138,7 @@ function onDragLeave() {
 
 function onDrop(e: DragEvent, index: number) {
   e.preventDefault()
-  if (dragConnId.value) return
+  if (dragConnId.value || index < 0) return
   if (dragIndex.value !== null && dragIndex.value !== index) {
     const ids = props.groups.map((g) => g.id)
     const [moved] = ids.splice(dragIndex.value, 1)
@@ -111,6 +178,21 @@ function onGroupDragLeaveConn() {
   dropTargetGroupId.value = null
 }
 
+function onGroupDragLeave(e: DragEvent) {
+  onDragLeave()
+  onGroupDragLeaveConn()
+}
+
+function onGroupDragOver(e: DragEvent, groupId: string) {
+  onDragOver(e, getGroupIndex(groupId))
+  onGroupDragOverConn(e, groupId)
+}
+
+function onGroupDrop(e: DragEvent, groupId: string) {
+  onDrop(e, getGroupIndex(groupId))
+  onGroupDropConn(e, groupId)
+}
+
 function onGroupDropConn(e: DragEvent, groupId: string) {
   e.preventDefault()
   const connId = dragConnId.value || e.dataTransfer?.getData('application/x-lite-ssh-conn')
@@ -142,27 +224,40 @@ function onUngroupedDragOverConn(e: DragEvent) {
 <template>
   <div class="group-panel">
     <div class="group-panel-title">分组</div>
+    <div class="group-search">
+      <input
+        v-model="groupSearchQuery"
+        class="group-search-input"
+        placeholder="搜索分组或连接..."
+      />
+    </div>
     <div class="group-list">
-      <template v-for="(group, index) in groups" :key="group.id">
+      <template v-for="group in visibleGroups" :key="group.id">
         <div
           class="group-item"
           :class="{
             active: group.id === activeGroupId,
-            dragging: dragIndex === index,
-            'drop-above': dropIndex === index && dragIndex !== null && dragIndex < index,
-            'drop-below': dropIndex === index && dragIndex !== null && dragIndex > index,
+            dragging: dragIndex === getGroupIndex(group.id),
+            'drop-above': dropIndex === getGroupIndex(group.id) && dragIndex !== null && dragIndex < getGroupIndex(group.id),
+            'drop-below': dropIndex === getGroupIndex(group.id) && dragIndex !== null && dragIndex > getGroupIndex(group.id),
             'drop-target': dropTargetGroupId === group.id,
           }"
           draggable="true"
           @click="emit('select', group.id)"
-          @dragstart="onDragStart(index)"
-          @dragover="onDragOver($event, index); onGroupDragOverConn($event, group.id)"
-          @dragleave="onDragLeave; onGroupDragLeaveConn"
-          @drop="onDrop($event, index); onGroupDropConn($event, group.id)"
+          @dragstart="onDragStart(getGroupIndex(group.id))"
+          @dragover="onGroupDragOver($event, group.id)"
+          @dragleave="onGroupDragLeave"
+          @drop="onGroupDrop($event, group.id)"
           @dragend="onDragEnd"
         >
-          <div v-if="dropIndex === index && dragIndex !== null && dragIndex < index" class="drop-indicator top"></div>
+          <div v-if="dropIndex === getGroupIndex(group.id) && dragIndex !== null && dragIndex < getGroupIndex(group.id)" class="drop-indicator top"></div>
           <div class="group-item-content">
+            <button class="collapse-btn" @click.stop="toggleGroupCollapsed(group.id)">
+              <el-icon :size="12">
+                <ArrowRight v-if="isGroupCollapsed(group.id)" />
+                <ArrowDown v-else />
+              </el-icon>
+            </button>
             <span v-if="group.isDefault" class="default-star" title="默认分组">
               <el-icon :size="12"><Star /></el-icon>
             </span>
@@ -178,7 +273,7 @@ function onUngroupedDragOverConn(e: DragEvent) {
             </template>
             <template v-else>
               <span class="group-name">{{ group.name }}</span>
-              <span class="group-count" v-if="connectionCounts[group.id]">{{ connectionCounts[group.id] }}</span>
+              <span class="group-count">{{ connectionCounts[group.id] || 0 }}</span>
             </template>
           </div>
           <div v-if="editingId !== group.id" class="group-actions">
@@ -187,8 +282,8 @@ function onUngroupedDragOverConn(e: DragEvent) {
                 <el-icon :size="12"><Edit /></el-icon>
               </button>
             </el-tooltip>
-            <el-tooltip v-if="!group.isDefault" content="设为默认" placement="right">
-              <button class="icon-btn-tiny" @click.stop="emit('setDefault', group.id)">
+            <el-tooltip :content="group.isDefault ? '取消默认' : '设为默认'" placement="right">
+              <button class="icon-btn-tiny" @click.stop="emit('setDefault', group.isDefault ? null : group.id)">
                 <el-icon :size="12"><Star /></el-icon>
               </button>
             </el-tooltip>
@@ -198,11 +293,11 @@ function onUngroupedDragOverConn(e: DragEvent) {
               </button>
             </el-tooltip>
           </div>
-          <div v-if="dropIndex === index && dragIndex !== null && dragIndex > index" class="drop-indicator bottom"></div>
+          <div v-if="dropIndex === getGroupIndex(group.id) && dragIndex !== null && dragIndex > getGroupIndex(group.id)" class="drop-indicator bottom"></div>
         </div>
-        <div class="group-connections">
+        <div v-if="!isGroupCollapsed(group.id)" class="group-connections">
           <div
-            v-for="conn in getConnectionsForGroup(group.id)"
+            v-for="conn in getVisibleConnectionsForGroup(group.id)"
             :key="conn.id"
             class="sidebar-conn"
             :class="{ dragging: dragConnId === conn.id }"
@@ -217,7 +312,12 @@ function onUngroupedDragOverConn(e: DragEvent) {
         </div>
       </template>
 
+      <div v-if="visibleGroups.length === 0 && !showUngrouped" class="empty-groups">
+        未找到匹配内容
+      </div>
+
       <div
+        v-if="showUngrouped"
         class="group-item ungrouped"
         :class="{ active: UNGROUPED_ID === activeGroupId, 'drop-target': dropTargetGroupId === UNGROUPED_ID }"
         @click="emit('select', UNGROUPED_ID)"
@@ -226,13 +326,19 @@ function onUngroupedDragOverConn(e: DragEvent) {
         @drop="onUngroupedDropConn"
       >
         <div class="group-item-content">
+          <button class="collapse-btn" @click.stop="toggleUngroupedCollapsed">
+            <el-icon :size="12">
+              <ArrowRight v-if="isUngroupedCollapsed()" />
+              <ArrowDown v-else />
+            </el-icon>
+          </button>
           <span class="group-name">未分组</span>
-          <span class="group-count" v-if="connectionCounts[UNGROUPED_ID]">{{ connectionCounts[UNGROUPED_ID] }}</span>
+          <span class="group-count">{{ connectionCounts[UNGROUPED_ID] || 0 }}</span>
         </div>
       </div>
-      <div class="group-connections">
+      <div v-if="showUngrouped && !isUngroupedCollapsed()" class="group-connections">
         <div
-          v-for="conn in getConnectionsForGroup(UNGROUPED_ID)"
+          v-for="conn in visibleUngroupedConnections"
           :key="conn.id"
           class="sidebar-conn"
           :class="{ dragging: dragConnId === conn.id }"
@@ -269,12 +375,37 @@ function onUngroupedDragOverConn(e: DragEvent) {
 }
 
 .group-panel-title {
-  padding: 16px 16px 12px;
+  padding: 16px 16px 8px;
   font-size: 12px;
   font-weight: 600;
   color: var(--text-secondary);
   text-transform: uppercase;
   letter-spacing: 0.5px;
+}
+
+.group-search {
+  padding: 0 8px 8px;
+}
+
+.group-search-input {
+  width: 100%;
+  padding: 7px 9px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  color: var(--text-primary);
+  font-size: 12px;
+  outline: none;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.group-search-input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-bg);
+}
+
+.group-search-input::placeholder {
+  color: var(--text-secondary);
 }
 
 .group-list {
@@ -341,6 +472,33 @@ function onUngroupedDragOverConn(e: DragEvent) {
   color: var(--warning);
   display: flex;
   align-items: center;
+}
+
+.collapse-btn {
+  width: 16px;
+  height: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+
+.collapse-btn:hover {
+  color: var(--text-primary);
+  background: var(--hover-bg);
+}
+
+.empty-groups {
+  padding: 14px 8px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  text-align: center;
 }
 
 .group-actions {

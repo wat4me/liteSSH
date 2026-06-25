@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { ref, onMounted, onBeforeUnmount } from 'vue'
 import { ElMessage } from 'element-plus/es/components/message/index'
-import type { Connection, Group } from '../env.d.ts'
+import { ElMessageBox } from 'element-plus/es/components/message-box/index'
+import type { Connection, Group, SavedCredential } from '../env.d.ts'
 
 const props = defineProps<{
   connection: Connection | null
@@ -28,6 +29,8 @@ const form = ref({
 })
 
 const groups = ref<Group[]>([])
+const savedCredentials = ref<SavedCredential[]>([])
+const selectedCredentialId = ref('')
 const saving = ref(false)
 const showPassword = ref(false)
 const privateKeyFileName = ref('')
@@ -54,12 +57,14 @@ const diagnoseResult = ref<DiagnoseResult | null>(null)
 
 onMounted(async () => {
   const groupsPromise = window.liteSSH.getGroups()
+  const savedCredentialsPromise = window.liteSSH.getSavedCredentials()
   const passwordPromise = props.connection?.id
     ? window.liteSSH.getConnectionPassword(props.connection.id)
     : Promise.resolve(props.connection?.password || '')
 
-  const [loadedGroups, password] = await Promise.all([groupsPromise, passwordPromise])
+  const [loadedGroups, loadedCredentials, password] = await Promise.all([groupsPromise, savedCredentialsPromise, passwordPromise])
   groups.value = loadedGroups
+  savedCredentials.value = loadedCredentials
 
   if (props.connection) {
     form.value = {
@@ -251,6 +256,56 @@ function switchAuthType(type: 'password' | 'key') {
     privateKeyFileName.value = ''
   }
 }
+
+async function refreshSavedCredentials() {
+  savedCredentials.value = await window.liteSSH.getSavedCredentials()
+}
+
+async function applySavedCredential() {
+  const credential = savedCredentials.value.find((item) => item.id === selectedCredentialId.value)
+  if (!credential) return
+  const password = await window.liteSSH.getSavedCredentialPassword(credential.id)
+  form.value.username = credential.username
+  form.value.password = password
+  authType.value = 'password'
+  ElMessage.success('已填充凭据')
+}
+
+async function saveCurrentCredential() {
+  if (!form.value.username.trim()) {
+    ElMessage.warning('请输入用户名')
+    return
+  }
+  if (!form.value.password) {
+    ElMessage.warning('请输入密码')
+    return
+  }
+  try {
+    const { value } = await ElMessageBox.prompt('请输入凭据名称', '保存凭据', {
+      confirmButtonText: '保存',
+      cancelButtonText: '取消',
+      inputValue: form.value.username.trim(),
+      inputPattern: /\S+/,
+      inputErrorMessage: '凭据名称不能为空',
+    })
+    const saved = await window.liteSSH.saveSavedCredential({
+      name: value.trim(),
+      username: form.value.username.trim(),
+      password: form.value.password,
+    })
+    await refreshSavedCredentials()
+    selectedCredentialId.value = saved.id
+    ElMessage.success('凭据已保存')
+  } catch {}
+}
+
+async function deleteSelectedCredential() {
+  if (!selectedCredentialId.value) return
+  await window.liteSSH.deleteSavedCredential(selectedCredentialId.value)
+  selectedCredentialId.value = ''
+  await refreshSavedCredentials()
+  ElMessage.success('凭据已删除')
+}
 </script>
 
 <template>
@@ -274,6 +329,21 @@ function switchAuthType(type: 'password' | 'key') {
           <div class="host-row">
             <input v-model="form.host" placeholder="192.168.1.1 或 example.com" class="input host-input" />
             <input v-model.number="form.port" type="number" placeholder="端口" class="input port-input" />
+          </div>
+        </div>
+
+        <div class="form-row">
+          <label class="label">凭据库</label>
+          <div class="credential-row">
+            <select v-model="selectedCredentialId" class="input credential-select">
+              <option value="">选择已保存凭据...</option>
+              <option v-for="credential in savedCredentials" :key="credential.id" :value="credential.id">
+                {{ credential.name }} / {{ credential.username }}
+              </option>
+            </select>
+            <button type="button" class="btn-credential" :disabled="!selectedCredentialId" @click="applySavedCredential">填充</button>
+            <button type="button" class="btn-credential" @click="saveCurrentCredential">保存当前</button>
+            <button type="button" class="btn-credential danger" :disabled="!selectedCredentialId" @click="deleteSelectedCredential">删除</button>
           </div>
         </div>
 
@@ -535,6 +605,44 @@ function switchAuthType(type: 'password' | 'key') {
 
 .auth-tab:hover:not(.active) {
   background: var(--bg-tertiary);
+}
+
+.credential-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.credential-select {
+  flex: 1;
+}
+
+.btn-credential {
+  height: 40px;
+  padding: 0 10px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  color: var(--text-secondary);
+  font-size: 13px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.15s;
+}
+
+.btn-credential:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.btn-credential.danger:hover:not(:disabled) {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+.btn-credential:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .privatekey-row {

@@ -6,10 +6,11 @@
   "main": "dist-electron/main.js",
   "scripts": {
     "dev": "vite",
-    "build": "vue-tsc --noEmit --incremental && vite build",
+    "typecheck": "vue-tsc --noEmit --incremental",
+    "build": "npm run typecheck && vite build",
     "preview": "vite preview",
     "electron:dev": "vite",
-    "electron:build": "vue-tsc --noEmit --incremental && vite build && electron-builder"
+    "electron:build": "npm run typecheck && vite build && electron-builder"
   },
   "dependencies": {
     "@element-plus/icons-vue": "^2.3.1",

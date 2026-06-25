@@ -152,6 +152,47 @@ export function registerStoreHandlers(
     return credentialStore.getConnectionPassword(id) || ''
   })
 
+  ipcMain.handle('store:getSavedCredentials', async () => {
+    await ensureCredentialStoreReady()
+    return credentialStore.getSavedCredentials()
+  })
+
+  ipcMain.handle('store:getSavedCredentialPassword', async (_event, id: string) => {
+    await ensureCredentialStoreReady()
+    if (!isValidUUID(id)) {
+      throw new Error('Invalid credential id')
+    }
+    return credentialStore.getSavedCredentialPassword(id) || ''
+  })
+
+  ipcMain.handle('store:saveSavedCredential', async (_event, credential: any) => {
+    await ensureCredentialStoreReady()
+    if (!credential || typeof credential !== 'object') {
+      throw new Error('Invalid credential object')
+    }
+    if (!credential.name || typeof credential.name !== 'string') {
+      throw new Error('Invalid credential name')
+    }
+    if (!isValidUsername(credential.username)) {
+      throw new Error('Invalid username')
+    }
+    if (typeof credential.password !== 'string') {
+      throw new Error('Invalid password')
+    }
+    if (credential.id !== undefined && !isValidUUID(credential.id)) {
+      throw new Error('Invalid credential id')
+    }
+    return await credentialStore.saveSavedCredential(credential)
+  })
+
+  ipcMain.handle('store:deleteSavedCredential', async (_event, id: string) => {
+    await ensureCredentialStoreReady()
+    if (!isValidUUID(id)) {
+      throw new Error('Invalid credential id')
+    }
+    return await credentialStore.deleteSavedCredential(id)
+  })
+
   ipcMain.handle('store:isEncryptionAvailable', () => {
     return safeStorage.isEncryptionAvailable()
   })
@@ -191,9 +232,9 @@ export function registerStoreHandlers(
     await credentialStore.reorderGroups(ids)
   })
 
-  ipcMain.handle('store:setDefaultGroup', async (_event, id: string) => {
+  ipcMain.handle('store:setDefaultGroup', async (_event, id: string | null) => {
     await ensureCredentialStoreReady()
-    if (!isValidUUID(id)) {
+    if (id !== null && !isValidUUID(id)) {
       throw new Error('Invalid group id')
     }
     await credentialStore.setDefaultGroup(id)
