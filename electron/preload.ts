@@ -29,6 +29,8 @@ contextBridge.exposeInMainWorld('liteSSH', {
   setTerminalFontSize: (size: number) => ipcRenderer.invoke('settings:setTerminalFontSize', size),
   getRecentDownloadPaths: () => ipcRenderer.invoke('settings:getRecentDownloadPaths'),
   addRecentDownloadPath: (dirPath: string) => ipcRenderer.invoke('settings:addRecentDownloadPath', dirPath),
+  getCredentialAutoFillEnabled: () => ipcRenderer.invoke('settings:getCredentialAutoFillEnabled'),
+  setCredentialAutoFillEnabled: (enabled: boolean) => ipcRenderer.invoke('settings:setCredentialAutoFillEnabled', enabled),
   getAiSettings: () => ipcRenderer.invoke('settings:getAiSettings'),
   setAiSettings: (settings: any) => ipcRenderer.invoke('settings:setAiSettings', settings),
   aiChat: (messages: any[]) => ipcRenderer.invoke('ai:chat', messages),

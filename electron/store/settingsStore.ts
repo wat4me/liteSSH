@@ -118,6 +118,15 @@ export class SettingsStore {
     return paths.filter((p): p is string => typeof p === 'string' && p.length > 0)
   }
 
+  getCredentialAutoFillEnabled(): boolean {
+    return this.settings.credentialAutoFillEnabled === true
+  }
+
+  async setCredentialAutoFillEnabled(enabled: boolean): Promise<void> {
+    this.settings.credentialAutoFillEnabled = enabled
+    await this.save()
+  }
+
   async addRecentDownloadPath(dirPath: string): Promise<void> {
     const paths = this.getRecentDownloadPaths().filter((p) => p !== dirPath)
     paths.unshift(dirPath)

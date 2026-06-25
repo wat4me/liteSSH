@@ -37,6 +37,8 @@ declare global {
       setTerminalFontSize: (size: number) => Promise<void>
       getRecentDownloadPaths: () => Promise<string[]>
       addRecentDownloadPath: (dirPath: string) => Promise<void>
+      getCredentialAutoFillEnabled: () => Promise<boolean>
+      setCredentialAutoFillEnabled: (enabled: boolean) => Promise<void>
       getAiSettings: () => Promise<AiSettings>
       setAiSettings: (settings: AiSettings) => Promise<void>
       aiChat: (messages: AiChatMessage[]) => Promise<AiChatResult>

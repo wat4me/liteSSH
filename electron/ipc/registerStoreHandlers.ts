@@ -323,6 +323,19 @@ export function registerStoreHandlers(
     await settingsStore.addRecentDownloadPath(dirPath)
   })
 
+  ipcMain.handle('settings:getCredentialAutoFillEnabled', async () => {
+    await ensureSettingsStoreReady()
+    return settingsStore.getCredentialAutoFillEnabled()
+  })
+
+  ipcMain.handle('settings:setCredentialAutoFillEnabled', async (_event, enabled: boolean) => {
+    await ensureSettingsStoreReady()
+    if (typeof enabled !== 'boolean') {
+      throw new Error('Invalid value')
+    }
+    await settingsStore.setCredentialAutoFillEnabled(enabled)
+  })
+
   // Import/Export
   ipcMain.handle('store:exportConnections', async () => {
     await ensureCredentialStoreReady()

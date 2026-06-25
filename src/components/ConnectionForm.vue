@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, onBeforeUnmount } from 'vue'
+import { computed, ref, onMounted, onBeforeUnmount } from 'vue'
 import { ElMessage } from 'element-plus/es/components/message/index'
 import { ElMessageBox } from 'element-plus/es/components/message-box/index'
 import type { Connection, Group, SavedCredential } from '../env.d.ts'
@@ -31,6 +31,7 @@ const form = ref({
 const groups = ref<Group[]>([])
 const savedCredentials = ref<SavedCredential[]>([])
 const selectedCredentialId = ref('')
+const credentialAutoFillEnabled = ref(false)
 const saving = ref(false)
 const showPassword = ref(false)
 const privateKeyFileName = ref('')
@@ -55,16 +56,27 @@ interface DiagnoseResult {
 const diagnoseState = ref<DiagnoseState>('idle')
 const diagnoseResult = ref<DiagnoseResult | null>(null)
 
+const selectedCredential = computed(() => {
+  return savedCredentials.value.find((credential) => credential.id === selectedCredentialId.value) || null
+})
+
 onMounted(async () => {
   const groupsPromise = window.liteSSH.getGroups()
   const savedCredentialsPromise = window.liteSSH.getSavedCredentials()
+  const autoFillPromise = window.liteSSH.getCredentialAutoFillEnabled()
   const passwordPromise = props.connection?.id
     ? window.liteSSH.getConnectionPassword(props.connection.id)
     : Promise.resolve(props.connection?.password || '')
 
-  const [loadedGroups, loadedCredentials, password] = await Promise.all([groupsPromise, savedCredentialsPromise, passwordPromise])
+  const [loadedGroups, loadedCredentials, autoFillEnabled, password] = await Promise.all([
+    groupsPromise,
+    savedCredentialsPromise,
+    autoFillPromise,
+    passwordPromise,
+  ])
   groups.value = loadedGroups
   savedCredentials.value = loadedCredentials
+  credentialAutoFillEnabled.value = autoFillEnabled
 
   if (props.connection) {
     form.value = {
@@ -88,6 +100,11 @@ onMounted(async () => {
     }
   } else if (props.defaultGroupId) {
     form.value.group = props.defaultGroupId
+  }
+
+  if (!props.connection && autoFillEnabled && loadedCredentials.length > 0) {
+    selectedCredentialId.value = loadedCredentials[0].id
+    await fillCredential(loadedCredentials[0])
   }
 })
 
@@ -261,13 +278,16 @@ async function refreshSavedCredentials() {
   savedCredentials.value = await window.liteSSH.getSavedCredentials()
 }
 
-async function applySavedCredential() {
-  const credential = savedCredentials.value.find((item) => item.id === selectedCredentialId.value)
-  if (!credential) return
+async function fillCredential(credential: SavedCredential) {
   const password = await window.liteSSH.getSavedCredentialPassword(credential.id)
   form.value.username = credential.username
   form.value.password = password
   authType.value = 'password'
+}
+
+async function applySavedCredential() {
+  if (!selectedCredential.value) return
+  await fillCredential(selectedCredential.value)
   ElMessage.success('已填充凭据')
 }
 
@@ -280,21 +300,39 @@ async function saveCurrentCredential() {
     ElMessage.warning('请输入密码')
     return
   }
+  await createSavedCredential(form.value.username.trim(), form.value.password)
+}
+
+async function createSavedCredential(defaultUsername = '', defaultPassword = '') {
   try {
-    const { value } = await ElMessageBox.prompt('请输入凭据名称', '保存凭据', {
-      confirmButtonText: '保存',
+    const { value: nameValue } = await ElMessageBox.prompt('请输入凭据名称', '新建凭据', {
+      confirmButtonText: '下一步',
       cancelButtonText: '取消',
-      inputValue: form.value.username.trim(),
+      inputValue: defaultUsername,
       inputPattern: /\S+/,
       inputErrorMessage: '凭据名称不能为空',
     })
+    const { value: usernameValue } = await ElMessageBox.prompt('请输入用户名', '新建凭据', {
+      confirmButtonText: '下一步',
+      cancelButtonText: '取消',
+      inputValue: defaultUsername,
+      inputPattern: /\S+/,
+      inputErrorMessage: '用户名不能为空',
+    })
+    const { value: passwordValue } = await ElMessageBox.prompt('请输入密码', '新建凭据', {
+      confirmButtonText: '保存',
+      cancelButtonText: '取消',
+      inputValue: defaultPassword,
+      inputType: 'password',
+    })
     const saved = await window.liteSSH.saveSavedCredential({
-      name: value.trim(),
-      username: form.value.username.trim(),
-      password: form.value.password,
+      name: nameValue.trim(),
+      username: usernameValue.trim(),
+      password: passwordValue || '',
     })
     await refreshSavedCredentials()
     selectedCredentialId.value = saved.id
+    await applySavedCredential()
     ElMessage.success('凭据已保存')
   } catch {}
 }
@@ -305,6 +343,10 @@ async function deleteSelectedCredential() {
   selectedCredentialId.value = ''
   await refreshSavedCredentials()
   ElMessage.success('凭据已删除')
+}
+
+async function toggleCredentialAutoFill() {
+  await window.liteSSH.setCredentialAutoFillEnabled(credentialAutoFillEnabled.value)
 }
 </script>
 
@@ -332,24 +374,26 @@ async function deleteSelectedCredential() {
           </div>
         </div>
 
-        <div class="form-row">
-          <label class="label">凭据库</label>
-          <div class="credential-row">
-            <select v-model="selectedCredentialId" class="input credential-select">
-              <option value="">选择已保存凭据...</option>
-              <option v-for="credential in savedCredentials" :key="credential.id" :value="credential.id">
-                {{ credential.name }} / {{ credential.username }}
-              </option>
-            </select>
-            <button type="button" class="btn-credential" :disabled="!selectedCredentialId" @click="applySavedCredential">填充</button>
-            <button type="button" class="btn-credential" @click="saveCurrentCredential">保存当前</button>
-            <button type="button" class="btn-credential danger" :disabled="!selectedCredentialId" @click="deleteSelectedCredential">删除</button>
-          </div>
+        <div class="credential-tools">
+          <button type="button" class="btn-credential" @click="createSavedCredential()">新建凭据</button>
+          <button type="button" class="btn-credential" :disabled="!selectedCredentialId" @click="deleteSelectedCredential">删除选中凭据</button>
+          <label class="credential-autofill">
+            <input v-model="credentialAutoFillEnabled" type="checkbox" @change="toggleCredentialAutoFill" />
+            <span>新建连接自动填充第一个凭据</span>
+          </label>
         </div>
 
         <div class="form-row">
           <label class="label">用户名</label>
-          <input v-model="form.username" placeholder="root" class="input" />
+          <div class="username-row">
+            <input v-model="form.username" placeholder="root" class="input username-input" />
+            <select v-model="selectedCredentialId" class="input credential-inline-select" @change="applySavedCredential">
+              <option value="">选择凭据...</option>
+              <option v-for="credential in savedCredentials" :key="credential.id" :value="credential.id">
+                {{ credential.name }} / {{ credential.username }}
+              </option>
+            </select>
+          </div>
         </div>
 
         <div class="form-row">
@@ -607,14 +651,38 @@ async function deleteSelectedCredential() {
   background: var(--bg-tertiary);
 }
 
-.credential-row {
+.credential-tools {
   display: flex;
-  gap: 8px;
   align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
 }
 
-.credential-select {
+.credential-autofill {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.username-row {
+  display: flex;
+  gap: 8px;
+}
+
+.username-input {
   flex: 1;
+}
+
+.credential-inline-select {
+  width: 170px;
+  cursor: pointer;
 }
 
 .btn-credential {
@@ -633,11 +701,6 @@ async function deleteSelectedCredential() {
 .btn-credential:hover:not(:disabled) {
   border-color: var(--accent);
   color: var(--accent);
-}
-
-.btn-credential.danger:hover:not(:disabled) {
-  border-color: var(--danger);
-  color: var(--danger);
 }
 
 .btn-credential:disabled {
