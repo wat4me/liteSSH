@@ -12,6 +12,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   (e: 'saved', connection: Connection): void
   (e: 'cancel'): void
+  (e: 'credential-saved'): void
 }>()
 
 const form = ref({
@@ -59,6 +60,8 @@ const diagnoseResult = ref<DiagnoseResult | null>(null)
 const selectedCredential = computed(() => {
   return savedCredentials.value.find((credential) => credential.id === selectedCredentialId.value) || null
 })
+
+defineExpose({ createSavedCredential })
 
 onMounted(async () => {
   const groupsPromise = window.liteSSH.getGroups()
@@ -333,6 +336,7 @@ async function createSavedCredential(defaultUsername = '', defaultPassword = '')
     await refreshSavedCredentials()
     selectedCredentialId.value = saved.id
     await applySavedCredential()
+    emit('credential-saved')
     ElMessage.success('凭据已保存')
   } catch {}
 }
@@ -372,15 +376,6 @@ async function toggleCredentialAutoFill() {
             <input v-model="form.host" placeholder="192.168.1.1 或 example.com" class="input host-input" />
             <input v-model.number="form.port" type="number" placeholder="端口" class="input port-input" />
           </div>
-        </div>
-
-        <div class="credential-tools">
-          <button type="button" class="btn-credential" @click="createSavedCredential()">新建凭据</button>
-          <button type="button" class="btn-credential" :disabled="!selectedCredentialId" @click="deleteSelectedCredential">删除选中凭据</button>
-          <label class="credential-autofill">
-            <input v-model="credentialAutoFillEnabled" type="checkbox" @change="toggleCredentialAutoFill" />
-            <span>新建连接自动填充第一个凭据</span>
-          </label>
         </div>
 
         <div class="form-row">
@@ -649,26 +644,6 @@ async function toggleCredentialAutoFill() {
 
 .auth-tab:hover:not(.active) {
   background: var(--bg-tertiary);
-}
-
-.credential-tools {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 10px 12px;
-  background: var(--bg-primary);
-  border: 1px solid var(--border-color);
-  border-radius: 8px;
-}
-
-.credential-autofill {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-left: auto;
-  color: var(--text-secondary);
-  font-size: 12px;
-  cursor: pointer;
 }
 
 .username-row {

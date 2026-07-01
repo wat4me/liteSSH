@@ -359,31 +359,9 @@ onBeforeUnmount(() => {
           </button>
           <button
             class="toolbar-icon-btn"
-            :class="{ active: splitMode === 'horizontal' }"
-            @click="toggleHorizontal"
-            title="水平分屏"
-          >
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-              <rect x="3" y="3" width="18" height="18" rx="2"/>
-              <line x1="3" y1="12" x2="21" y2="12"/>
-            </svg>
-          </button>
-          <button
-            class="toolbar-icon-btn"
-            :class="{ active: splitMode === 'vertical' }"
-            @click="toggleVertical"
-            title="垂直分屏"
-          >
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-              <rect x="3" y="3" width="18" height="18" rx="2"/>
-              <line x1="12" y1="3" x2="12" y2="21"/>
-            </svg>
-          </button>
-          <button
-            class="toolbar-icon-btn"
             :class="{ active: batchPanelVisible }"
             @click="toggleBatchPanel"
-            title="批量命令"
+            title="批量执行"
           >
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
               <polyline points="4 17 10 11 4 5"/>
@@ -436,22 +414,75 @@ onBeforeUnmount(() => {
             @select="onSelectSession"
             @close="handleCloseSession"
             @add="createSession"
-          />
+          >
+            <template #actions>
+              <div class="terminal-layout-actions">
+                <span class="layout-action-label">布局</span>
+                <button
+                  class="layout-action-btn"
+                  :class="{ active: splitMode === 'horizontal' }"
+                  @click="toggleHorizontal"
+                  title="上下分屏"
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                    <rect x="3" y="3" width="18" height="18" rx="2"/>
+                    <line x1="3" y1="12" x2="21" y2="12"/>
+                  </svg>
+                </button>
+                <button
+                  class="layout-action-btn"
+                  :class="{ active: splitMode === 'vertical' }"
+                  @click="toggleVertical"
+                  title="左右分屏"
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                    <rect x="3" y="3" width="18" height="18" rx="2"/>
+                    <line x1="12" y1="3" x2="12" y2="21"/>
+                  </svg>
+                </button>
+              </div>
+            </template>
+          </SubTabBar>
           <div v-else-if="showSplitModeBar && activeGroup" class="split-mode-bar">
             <div class="split-mode-info">
               <span class="split-mode-name">{{ activeGroup.connectionName }}</span>
               <span v-if="activeGroupSshAddress" class="split-mode-meta">{{ activeGroupSshAddress }}</span>
             </div>
-            <button
-              class="split-mode-add"
-              @click="createSession(activeGroup.connectionId)"
-              title="新建终端"
-            >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <line x1="12" y1="5" x2="12" y2="19"/>
-                <line x1="5" y1="12" x2="19" y2="12"/>
-              </svg>
-            </button>
+            <div class="terminal-layout-actions">
+              <span class="layout-action-label">布局</span>
+              <button
+                class="layout-action-btn"
+                @click="createSession(activeGroup.connectionId)"
+                title="新建终端"
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <line x1="12" y1="5" x2="12" y2="19"/>
+                  <line x1="5" y1="12" x2="19" y2="12"/>
+                </svg>
+              </button>
+              <button
+                class="layout-action-btn"
+                :class="{ active: splitMode === 'horizontal' }"
+                @click="toggleHorizontal"
+                title="上下分屏"
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                  <rect x="3" y="3" width="18" height="18" rx="2"/>
+                  <line x1="3" y1="12" x2="21" y2="12"/>
+                </svg>
+              </button>
+              <button
+                class="layout-action-btn"
+                :class="{ active: splitMode === 'vertical' }"
+                @click="toggleVertical"
+                title="左右分屏"
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                  <rect x="3" y="3" width="18" height="18" rx="2"/>
+                  <line x1="12" y1="3" x2="12" y2="21"/>
+                </svg>
+              </button>
+            </div>
           </div>
           <div
             ref="terminalContainerRef"
@@ -529,8 +560,9 @@ onBeforeUnmount(() => {
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                       <line x1="18" y1="6" x2="6" y2="18"/>
                       <line x1="6" y1="6" x2="18" y2="18"/>
-                    </svg>
-                  </button>
+            </svg>
+            <div class="batch-toolbar-badge" v-if="batchPanelVisible && batchSessions.length > 0">{{ batchSessions.length }}</div>
+          </button>
                 </div>
                 <div class="terminal-pane-body">
                   <KeepAlive :max="12">
@@ -647,6 +679,7 @@ onBeforeUnmount(() => {
   cursor: pointer;
   border-radius: 6px;
   transition: all 0.15s;
+  position: relative;
 }
 
 .toolbar-icon-btn:hover {
@@ -657,6 +690,21 @@ onBeforeUnmount(() => {
 .toolbar-icon-btn.active {
   color: var(--accent);
   background: var(--accent-bg);
+}
+
+.batch-toolbar-badge {
+  position: absolute;
+  right: 2px;
+  top: 2px;
+  min-width: 14px;
+  height: 14px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 14px;
 }
 
 .toolbar-divider {
@@ -727,14 +775,26 @@ onBeforeUnmount(() => {
   white-space: nowrap;
 }
 
-.split-mode-add {
+.terminal-layout-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.layout-action-label {
+  font-size: 10px;
+  color: var(--text-secondary);
+  margin-right: 2px;
+}
+
+.layout-action-btn {
   width: 22px;
   height: 22px;
   display: flex;
   align-items: center;
   justify-content: center;
   background: none;
-  border: 1px dashed var(--border-color);
+  border: 1px solid transparent;
   border-radius: 4px;
   color: var(--text-secondary);
   cursor: pointer;
@@ -742,7 +802,13 @@ onBeforeUnmount(() => {
   flex-shrink: 0;
 }
 
-.split-mode-add:hover {
+.layout-action-btn:hover {
+  color: var(--accent);
+  border-color: var(--border-color);
+  background: var(--bg-tertiary);
+}
+
+.layout-action-btn.active {
   color: var(--accent);
   border-color: var(--accent);
   background: var(--accent-bg);

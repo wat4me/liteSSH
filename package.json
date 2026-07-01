@@ -1,6 +1,6 @@
 {
   "name": "lite-ssh",
-  "version": "0.2.1",
+  "version": "0.2.3",
   "description": "Lightweight SSH connection manager with embedded terminal",
   "author": "liteSSH",
   "main": "dist-electron/main.js",
@@ -19,6 +19,7 @@
     "@xterm/xterm": "^5.5.0",
     "electron-updater": "^6.8.3",
     "element-plus": "^2.8.8",
+    "file-icons-js": "^1.1.0",
     "ssh2": "^1.15.0",
     "uuid": "^10.0.0",
     "vue": "^3.5.12"

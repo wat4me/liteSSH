@@ -2,7 +2,7 @@
 import { computed, ref, watch, nextTick } from 'vue'
 import type { FileEntry } from '../env.d.ts'
 import { formatSize } from '../utils/format'
-import { getFileIcon } from '../utils/fileIcons'
+import { getFileIconClass } from '../utils/fileIcons'
 
 const props = defineProps<{
   files: FileEntry[]
@@ -16,6 +16,7 @@ const emit = defineEmits<{
   (e: 'goUp'): void
   (e: 'download', entry: FileEntry): void
   (e: 'contextMenu', event: MouseEvent, entry: FileEntry): void
+  (e: 'retry'): void
 }>()
 
 const INITIAL_FILE_LIMIT = 20
@@ -108,13 +109,16 @@ defineExpose({ toggleSearch, handleKeydown })
       </button>
     </div>
 
-    <div v-if="error" class="sidebar-error">{{ error }}</div>
+    <div v-if="error" class="sidebar-error">
+      <div class="sidebar-error-text">{{ error }}</div>
+      <button class="sidebar-error-retry" @click="emit('retry')">重试</button>
+    </div>
 
     <div v-if="loading && files.length === 0" class="sidebar-loading">
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="spin-icon">
-        <path d="M21 12a9 9 0 1 1-6.219-8.56"/>
-      </svg>
-      <span>加载中...</span>
+      <div class="file-skeleton-row" v-for="index in 8" :key="index">
+        <span class="file-skeleton-icon"></span>
+        <span class="file-skeleton-name" :style="{ width: `${48 + (index % 4) * 12}%` }"></span>
+      </div>
     </div>
 
     <div class="file-list" v-else>
@@ -123,7 +127,7 @@ defineExpose({ toggleSearch, handleKeydown })
         class="file-entry file-entry-parent"
         @click="emit('goUp')"
       >
-        <span class="file-icon-img file-icon-img-parent" v-html="getFileIcon('', true, false)"></span>
+        <span class="file-icon-img file-icon-img-parent" :class="getFileIconClass('', true, false)"></span>
         <span class="file-name">..</span>
       </div>
 
@@ -135,7 +139,7 @@ defineExpose({ toggleSearch, handleKeydown })
         @click="entry.isDirectory || entry.isSymlink ? emit('navigate', entry) : undefined"
         @contextmenu="emit('contextMenu', $event, entry)"
       >
-        <span class="file-icon-img" v-html="getFileIcon(entry.name, entry.isDirectory, entry.isSymlink)"></span>
+        <span class="file-icon-img" :class="getFileIconClass(entry.name, entry.isDirectory, entry.isSymlink)"></span>
         <span class="file-name" :title="entry.name">
           <template v-if="isSearching">
             <template v-for="(part, idx) in highlightMatch(entry.name, searchQuery)" :key="idx">
@@ -171,7 +175,8 @@ defineExpose({ toggleSearch, handleKeydown })
       </div>
 
       <div v-if="files.length === 0 && currentPath && !loading && !isSearching" class="sidebar-empty">
-        空目录
+        <div class="sidebar-empty-icon">空</div>
+        <div>空目录</div>
       </div>
     </div>
   </div>
@@ -271,22 +276,72 @@ function highlightMatch(text: string, query: string): { text: string; highlight:
 }
 
 .sidebar-error {
-  padding: 6px 10px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
   font-size: 11px;
   color: var(--danger);
   background: rgba(248, 81, 73, 0.1);
-  margin: 4px 8px;
+  margin: 6px 8px;
+  border-radius: 7px;
+}
+
+.sidebar-error-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sidebar-error-retry {
+  border: 1px solid rgba(248, 81, 73, 0.35);
+  background: transparent;
+  color: var(--danger);
   border-radius: 4px;
+  padding: 2px 7px;
+  font-size: 11px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.sidebar-error-retry:hover {
+  background: rgba(248, 81, 73, 0.14);
 }
 
 .sidebar-loading {
+  padding: 8px 10px;
+}
+
+.file-skeleton-row {
   display: flex;
   align-items: center;
-  justify-content: center;
-  gap: 6px;
-  padding: 20px;
-  color: var(--text-secondary);
-  font-size: 12px;
+  gap: 8px;
+  height: 28px;
+  margin: 1px 0;
+}
+
+.file-skeleton-icon,
+.file-skeleton-name {
+  border-radius: 6px;
+  background: linear-gradient(90deg, var(--bg-tertiary), var(--hover-bg), var(--bg-tertiary));
+  background-size: 200% 100%;
+  animation: skeleton-pulse 1.2s ease-in-out infinite;
+}
+
+.file-skeleton-icon {
+  width: 22px;
+  height: 22px;
+  flex-shrink: 0;
+}
+
+.file-skeleton-name {
+  height: 10px;
+}
+
+@keyframes skeleton-pulse {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
 }
 
 .spin-icon {
@@ -341,11 +396,21 @@ function highlightMatch(text: string, query: string): { text: string; highlight:
   border-radius: 6px;
   background: color-mix(in srgb, var(--hover-bg) 68%, transparent);
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.04);
+  font-size: 17px;
+  line-height: 1;
 }
 
-.file-icon-img :deep(svg) {
-  width: 18px;
-  height: 18px;
+.file-icon-img.file-icon-folder::before {
+  content: '📁';
+  font-size: 16px;
+  line-height: 1;
+  filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.18));
+}
+
+.file-icon-img.icon::before {
+  width: auto;
+  font-size: 16px;
+  line-height: 1;
   filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.18));
 }
 
@@ -426,9 +491,26 @@ function highlightMatch(text: string, query: string): { text: string; highlight:
 }
 
 .sidebar-empty {
-  padding: 20px;
+  padding: 28px 20px;
   text-align: center;
   color: var(--text-secondary);
   font-size: 12px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+.sidebar-empty-icon {
+  width: 34px;
+  height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 10px;
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 700;
 }
 </style>

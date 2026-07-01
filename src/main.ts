@@ -12,6 +12,7 @@ import 'element-plus/es/components/tooltip/style/css'
 import 'element-plus/es/components/icon/style/css'
 
 import '@xterm/xterm/css/xterm.css'
+import 'file-icons-js/css/style.css'
 import App from './App.vue'
 import './styles/main.css'
 

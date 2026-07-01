@@ -65,7 +65,10 @@ function handleKeydown(e: KeyboardEvent) {
 <template>
   <div class="batch-panel">
     <div class="batch-header">
-      <div class="batch-title">批量命令</div>
+      <div class="batch-title">
+        <span>批量执行</span>
+        <span class="batch-title-badge">{{ selectedSessions.size }}/{{ sessions.length }}</span>
+      </div>
       <button class="batch-close" @click="emit('close')" title="关闭">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
@@ -198,9 +201,21 @@ function handleKeydown(e: KeyboardEvent) {
 }
 
 .batch-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   font-size: 13px;
   font-weight: 600;
   color: var(--text-primary);
+}
+
+.batch-title-badge {
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: var(--accent-bg);
+  color: var(--accent);
+  font-size: 10px;
+  font-weight: 700;
 }
 
 .batch-close {

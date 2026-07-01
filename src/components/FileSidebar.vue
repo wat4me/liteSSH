@@ -427,27 +427,39 @@ defineExpose({ handleTerminalCd, clearSessionState })
 
     <div v-if="activeTab === 'files'" class="sidebar-content">
       <div class="sidebar-toolbar">
-        <button class="sidebar-btn" @click="goToHome" title="主目录">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/>
-          </svg>
-        </button>
-        <button class="sidebar-btn" @click="handleSyncCwd" title="同步终端目录">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/>
-            <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l5.64 4.36A9 9 0 0 0 20.49 15"/>
-          </svg>
-        </button>
-        <button class="sidebar-btn" @click="handleRefresh" title="刷新">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
-          </svg>
-        </button>
-        <button class="sidebar-btn" @click="toggleFileSearch" title="搜索文件 (Ctrl+F)">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
-          </svg>
-        </button>
+        <div class="toolbar-group">
+          <span class="toolbar-group-label">位置</span>
+          <button class="sidebar-btn" @click="goToHome" title="主目录">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/>
+            </svg>
+          </button>
+          <button class="sidebar-btn" @click="handleSyncCwd" title="同步终端目录">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/>
+              <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l5.64 4.36A9 9 0 0 0 20.49 15"/>
+            </svg>
+          </button>
+          <button class="sidebar-btn" @click="handleRefresh" title="刷新">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
+            </svg>
+          </button>
+        </div>
+        <div class="toolbar-spacer"></div>
+        <div class="toolbar-group">
+          <span class="toolbar-group-label">操作</span>
+          <button class="sidebar-btn" @click="toggleFileSearch" title="搜索文件 (Ctrl+F)">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+            </svg>
+          </button>
+          <button class="sidebar-btn" title="上传文件：拖拽本地文件到列表区域">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
+            </svg>
+          </button>
+        </div>
       </div>
 
       <div class="sidebar-path" :class="{ editing: showPathInput }" @click="showPathInput || togglePathInput()">
@@ -479,6 +491,7 @@ defineExpose({ handleTerminalCd, clearSessionState })
         @navigate="handleNavigate"
         @go-up="handleGoUp"
         @download="startDownload"
+        @retry="handleRefresh"
         @context-menu="onContextMenu"
       />
 
@@ -651,9 +664,25 @@ defineExpose({ handleTerminalCd, clearSessionState })
 .sidebar-toolbar {
   display: flex;
   align-items: center;
-  gap: 2px;
-  padding: 4px 8px;
+  gap: 6px;
+  padding: 5px 8px;
   border-bottom: 1px solid var(--border-color);
+}
+
+.toolbar-group {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.toolbar-group-label {
+  font-size: 10px;
+  color: var(--text-secondary);
+  margin-right: 2px;
+}
+
+.toolbar-spacer {
+  flex: 1;
 }
 
 .sidebar-path {
