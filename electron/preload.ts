@@ -87,6 +87,12 @@ sshDiagnoseConnectionParams: (params: { host: string; port: number; username: st
   sftpUpload: (sessionId: string, localPath: string, remotePath: string, fileName: string, transferId: string) =>
     ipcRenderer.send('sftp:upload', sessionId, localPath, remotePath, fileName, transferId),
   sftpCancelTransfer: (transferId: string) => ipcRenderer.send('sftp:cancelTransfer', transferId),
+  sftpReadFile: (sessionId: string, remotePath: string) => ipcRenderer.invoke('sftp:readFile', sessionId, remotePath),
+  sftpWriteFile: (sessionId: string, remotePath: string, content: string) => ipcRenderer.invoke('sftp:writeFile', sessionId, remotePath, content),
+  sftpChmod: (sessionId: string, remotePath: string, mode: string, recursive?: boolean) => ipcRenderer.invoke('sftp:chmod', sessionId, remotePath, mode, recursive),
+  sftpChown: (sessionId: string, remotePath: string, owner: string, group?: string, recursive?: boolean) => ipcRenderer.invoke('sftp:chown', sessionId, remotePath, owner, group, recursive),
+  sftpRename: (sessionId: string, oldPath: string, newPath: string) => ipcRenderer.invoke('sftp:rename', sessionId, oldPath, newPath),
+  sftpStat: (sessionId: string, remotePath: string) => ipcRenderer.invoke('sftp:stat', sessionId, remotePath),
 
   getPathForFile: (file: File) => webUtils.getPathForFile(file),
 

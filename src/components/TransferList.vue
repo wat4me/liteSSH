@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import type { TransferItem } from '../env.d.ts'
 import { formatSize } from '../utils/format'
+import { formatSpeed } from '../composables/useTransfers'
 
-defineProps<{
+const props = defineProps<{
   transfers: [string, TransferItem][]
   direction: 'download' | 'upload'
   emptyText: string
+  getSpeed?: (id: string) => number
 }>()
 
 const emit = defineEmits<{
@@ -13,6 +15,10 @@ const emit = defineEmits<{
   (e: 'remove', id: string): void
   (e: 'openFolder', localPath: string): void
 }>()
+
+function getProgress(item: TransferItem): number {
+  return item.total ? Math.min(100, Math.round(item.transferred / item.total * 100)) : 0
+}
 </script>
 
 <template>
@@ -41,6 +47,7 @@ const emit = defineEmits<{
           <span class="transfer-name" :title="item.localPath">{{ item.fileName }}</span>
           <span v-if="item.status === 'downloading' || item.status === 'uploading'" class="transfer-detail">
             {{ formatSize(item.transferred) }} / {{ formatSize(item.total) }}
+            <span v-if="getSpeed && getSpeed(id) > 0" class="transfer-speed">· {{ formatSpeed(getSpeed(id)) }}</span>
           </span>
           <span v-else-if="item.status === 'completed'" class="transfer-detail transfer-detail-ok">
             {{ direction === 'download' ? '已完成 · 点击打开所在文件夹' : '上传完成' }}
@@ -50,11 +57,11 @@ const emit = defineEmits<{
           </span>
         </div>
       </div>
-      <div v-if="item.status === 'downloading' || item.status === 'uploading'" class="transfer-progress-bar">
-        <div
-          class="transfer-progress-fill"
-          :style="{ width: (item.total ? Math.min(100, Math.round(item.transferred / item.total * 100)) : 0) + '%' }"
-        ></div>
+      <div v-if="item.status === 'downloading' || item.status === 'uploading'" class="transfer-progress-col">
+        <span class="transfer-percent">{{ getProgress(item) }}%</span>
+        <div class="transfer-progress-bar">
+          <div class="transfer-progress-fill" :style="{ width: getProgress(item) + '%' }"></div>
+        </div>
       </div>
       <button
         v-if="item.status === 'downloading' || item.status === 'uploading'"
@@ -156,6 +163,11 @@ const emit = defineEmits<{
   color: var(--text-secondary);
 }
 
+.transfer-speed {
+  color: var(--accent);
+  font-weight: 600;
+}
+
 .transfer-detail-ok {
   color: var(--success);
 }
@@ -164,20 +176,34 @@ const emit = defineEmits<{
   color: var(--danger);
 }
 
+.transfer-progress-col {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.transfer-percent {
+  font-size: 10px;
+  color: var(--text-secondary);
+  min-width: 30px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
 .transfer-progress-bar {
-  width: 60px;
-  height: 3px;
+  width: 50px;
+  height: 4px;
   background: var(--bg-tertiary);
   border-radius: 2px;
   overflow: hidden;
-  flex-shrink: 0;
 }
 
 .transfer-progress-fill {
   height: 100%;
   background: var(--accent);
   border-radius: 2px;
-  transition: width 0.3s;
+  transition: width 0.3s ease-out;
 }
 
 .transfer-action {

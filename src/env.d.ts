@@ -100,6 +100,21 @@ declare global {
       sftpDownload: (sessionId: string, remotePath: string, fileName: string, transferId: string) => void
       sftpUpload: (sessionId: string, localPath: string, remotePath: string, fileName: string, transferId: string) => void
       sftpCancelTransfer: (transferId: string) => void
+      sftpReadFile: (sessionId: string, remotePath: string) => Promise<string>
+      sftpWriteFile: (sessionId: string, remotePath: string, content: string) => Promise<void>
+      sftpChmod: (sessionId: string, remotePath: string, mode: string, recursive?: boolean) => Promise<void>
+      sftpChown: (sessionId: string, remotePath: string, owner: string, group?: string, recursive?: boolean) => Promise<void>
+      sftpRename: (sessionId: string, oldPath: string, newPath: string) => Promise<void>
+      sftpStat: (sessionId: string, remotePath: string) => Promise<{
+        mode: string
+        size: number
+        uid: number
+        gid: number
+        atime: number
+        mtime: number
+        owner: string
+        group: string
+      }>
 
       getPathForFile: (file: File) => string
 

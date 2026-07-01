@@ -368,4 +368,56 @@ export function registerSshHandlers(
     const timeout = typeof timeoutMs === 'number' && timeoutMs > 0 ? timeoutMs : 30000
     return await sshManager.sftpExec(sessionId, command, timeout)
   })
+
+  ipcMain.handle('sftp:readFile', async (_event, sessionId: string, remotePath: string) => {
+    if (!sessionId || typeof sessionId !== 'string') throw new Error('Invalid session id')
+    if (!isStrictPath(remotePath)) throw new Error('Invalid path')
+    return await sshManager.sftpReadFile(sessionId, remotePath)
+  })
+
+  ipcMain.handle('sftp:writeFile', async (_event, sessionId: string, remotePath: string, content: string) => {
+    if (!sessionId || typeof sessionId !== 'string') throw new Error('Invalid session id')
+    if (!isStrictPath(remotePath)) throw new Error('Invalid path')
+    if (typeof content !== 'string') throw new Error('Invalid content')
+    await sshManager.sftpWriteFile(sessionId, remotePath, content)
+  })
+
+  ipcMain.handle('sftp:chmod', async (_event, sessionId: string, remotePath: string, mode: string, recursive?: boolean) => {
+    if (!sessionId || typeof sessionId !== 'string') throw new Error('Invalid session id')
+    if (!isStrictPath(remotePath)) throw new Error('Invalid path')
+    if (!/^[0-7]{3,4}$/.test(mode)) throw new Error('Invalid mode')
+    await sshManager.sftpChmod(sessionId, remotePath, mode, !!recursive)
+  })
+
+  ipcMain.handle('sftp:chown', async (_event, sessionId: string, remotePath: string, owner: string, group?: string, recursive?: boolean) => {
+    if (!sessionId || typeof sessionId !== 'string') throw new Error('Invalid session id')
+    if (!isStrictPath(remotePath)) throw new Error('Invalid path')
+    if (!owner || typeof owner !== 'string') throw new Error('Invalid owner')
+    if (group !== undefined && (typeof group !== 'string' || !group)) throw new Error('Invalid group')
+    await sshManager.sftpChown(sessionId, remotePath, owner, group, !!recursive)
+  })
+
+  ipcMain.handle('sftp:rename', async (_event, sessionId: string, oldPath: string, newPath: string) => {
+    if (!sessionId || typeof sessionId !== 'string') throw new Error('Invalid session id')
+    if (!isStrictPath(oldPath)) throw new Error('Invalid old path')
+    if (!isStrictPath(newPath)) throw new Error('Invalid new path')
+    await sshManager.sftpRename(sessionId, oldPath, newPath)
+  })
+
+  ipcMain.handle('sftp:stat', async (_event, sessionId: string, remotePath: string) => {
+    if (!sessionId || typeof sessionId !== 'string') throw new Error('Invalid session id')
+    if (!isStrictPath(remotePath)) throw new Error('Invalid path')
+    const stat = await sshManager.sftpStat(sessionId, remotePath)
+    let ownerName = String(stat.uid)
+    let groupName = String(stat.gid)
+    try {
+      const idResult = await sshManager.sftpExec(sessionId, `stat -c '%U:%G' "${remotePath}"`)
+      const parts = idResult.trim().split(':')
+      if (parts.length === 2) {
+        ownerName = parts[0]
+        groupName = parts[1]
+      }
+    } catch {}
+    return { ...stat, owner: ownerName, group: groupName }
+  })
 }

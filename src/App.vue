@@ -121,10 +121,13 @@ const {
   splitMode,
   splitRatio,
   isSplit,
+  isResizing,
   toggleHorizontal,
   toggleVertical,
   closeSplit,
   startSplitResize,
+  resetSplitRatio,
+  DIVIDER_SIZE,
 } = useSplitTerminal()
 
 const terminalContainerRef = ref<HTMLElement | null>(null)
@@ -205,17 +208,19 @@ const showSessionTabs = computed(() => {
 const showSplitModeBar = computed(() => splitHasSecondary.value && !showSessionTabs.value && !!activeGroup.value)
 
 function getPrimaryPaneStyle() {
+  const offset = DIVIDER_SIZE / 2
   if (splitMode.value === 'vertical') {
-    return { flex: `0 0 calc(${splitRatio.value}% - 1px)`, minWidth: '0' }
+    return { flex: `0 0 calc(${splitRatio.value}% - ${offset}px)`, minWidth: '0' }
   }
-  return { flex: `0 0 calc(${splitRatio.value}% - 1px)`, minHeight: '0' }
+  return { flex: `0 0 calc(${splitRatio.value}% - ${offset}px)`, minHeight: '0' }
 }
 
 function getSecondaryPaneStyle() {
+  const offset = DIVIDER_SIZE / 2
   if (splitMode.value === 'vertical') {
-    return { flex: `0 0 calc(${100 - splitRatio.value}% - 1px)`, minWidth: '0' }
+    return { flex: `0 0 calc(${100 - splitRatio.value}% - ${offset}px)`, minWidth: '0' }
   }
-  return { flex: `0 0 calc(${100 - splitRatio.value}% - 1px)`, minHeight: '0' }
+  return { flex: `0 0 calc(${100 - splitRatio.value}% - ${offset}px)`, minHeight: '0' }
 }
 
 function handleSessionClosed(sessionId: string) {
@@ -532,12 +537,20 @@ onBeforeUnmount(() => {
                 </KeepAlive>
               </div>
             </div>
-            <template v-if="splitHasSecondary && secondarySession">
+             <template v-if="splitHasSecondary && secondarySession">
               <div
                 class="split-divider"
-                :class="{ horizontal: splitMode === 'horizontal', vertical: splitMode === 'vertical' }"
+                :class="{
+                  horizontal: splitMode === 'horizontal',
+                  vertical: splitMode === 'vertical',
+                  resizing: isResizing
+                }"
                 @mousedown="onSplitDividerMousedown"
-              ></div>
+                @dblclick="resetSplitRatio"
+                title="拖拽调整分屏比例，双击复位"
+              >
+                <div class="split-divider-handle"></div>
+              </div>
               <div
                 class="terminal-pane"
                 :style="getSecondaryPaneStyle()"
@@ -560,9 +573,8 @@ onBeforeUnmount(() => {
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                       <line x1="18" y1="6" x2="6" y2="18"/>
                       <line x1="6" y1="6" x2="18" y2="18"/>
-            </svg>
-            <div class="batch-toolbar-badge" v-if="batchPanelVisible && batchSessions.length > 0">{{ batchSessions.length }}</div>
-          </button>
+                    </svg>
+                  </button>
                 </div>
                 <div class="terminal-pane-body">
                   <KeepAlive :max="12">
@@ -918,23 +930,80 @@ onBeforeUnmount(() => {
 
 .split-divider {
   flex-shrink: 0;
-  background: var(--border-color);
+  background: transparent;
   position: relative;
   z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .split-divider.horizontal {
-  height: 2px;
+  height: 6px;
   cursor: row-resize;
+  padding: 2px 0;
 }
 
 .split-divider.vertical {
-  width: 2px;
+  width: 6px;
   cursor: col-resize;
+  padding: 0 2px;
 }
 
-.split-divider:hover {
+.split-divider::before {
+  content: '';
+  position: absolute;
+  background: var(--border-color);
+  transition: background 0.2s;
+}
+
+.split-divider.horizontal::before {
+  left: 0;
+  right: 0;
+  top: 50%;
+  height: 2px;
+  transform: translateY(-50%);
+}
+
+.split-divider.vertical::before {
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 2px;
+  transform: translateX(-50%);
+}
+
+.split-divider:hover::before,
+.split-divider.resizing::before {
   background: var(--accent);
+}
+
+.split-divider-handle {
+  position: relative;
+  z-index: 1;
+  border-radius: 2px;
+  background: transparent;
+  transition: background 0.2s, transform 0.2s;
+}
+
+.split-divider.horizontal .split-divider-handle {
+  width: 40px;
+  height: 6px;
+}
+
+.split-divider.vertical .split-divider-handle {
+  width: 6px;
+  height: 40px;
+}
+
+.split-divider:hover .split-divider-handle,
+.split-divider.resizing .split-divider-handle {
+  background: var(--accent);
+  opacity: 0.6;
+}
+
+.split-divider.resizing .split-divider-handle {
+  opacity: 1;
 }
 
 .batch-panel-wrapper {

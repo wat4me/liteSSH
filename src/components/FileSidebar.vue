@@ -10,6 +10,8 @@ import type { TerminalPwdTracker } from '../composables/useTerminalPwd'
 import FileList from './FileList.vue'
 import TransferList from './TransferList.vue'
 import UploadConfirmModal from './UploadConfirmModal.vue'
+import FileEditorModal from './FileEditorModal.vue'
+import FilePropertiesModal from './FilePropertiesModal.vue'
 
 const fileListRef = ref<InstanceType<typeof FileList> | null>(null)
 
@@ -58,6 +60,7 @@ const {
 
 const {
   transfers,
+  activeTransfers,
   downloadTransfers,
   uploadTransfers,
   addTransfer,
@@ -67,6 +70,7 @@ const {
   cancelTransfer: cancelTransferAction,
   removeTransfer,
   clearFinishedTransfers,
+  getSpeed,
   formatSize,
 } = useTransfers(() => props.sessionId)
 
@@ -85,6 +89,23 @@ const showUploadConfirm = ref(false)
 const uploadFiles = ref<{ name: string; path: string }[]>([])
 const uploadTargetPath = ref('')
 const pathInputRef = ref<HTMLInputElement | null>(null)
+
+const showEditor = ref(false)
+const editorEntry = ref<FileEntry | null>(null)
+const showProperties = ref(false)
+const propertiesEntry = ref<FileEntry | null>(null)
+const showRename = ref(false)
+const renameEntry = ref<FileEntry | null>(null)
+const renameValue = ref('')
+const renameInputRef = ref<HTMLInputElement | null>(null)
+
+watch(showRename, async (val) => {
+  if (val) {
+    await nextTick()
+    renameInputRef.value?.focus()
+    renameInputRef.value?.select()
+  }
+})
 
 watch(showPathInput, async (val) => {
   if (val) {
@@ -244,6 +265,97 @@ function cancelUpload() {
 
 function openInFolder(localPath: string) {
   window.liteSSH.shellShowItemInFolder(localPath)
+}
+
+const EDITABLE_EXTENSIONS = [
+  '.txt', '.md', '.markdown', '.log', '.conf', '.cfg', '.ini',
+  '.sh', '.bash', '.zsh', '.fish', '.bat', '.cmd', '.ps1',
+  '.py', '.rb', '.pl', '.lua', '.js', '.mjs', '.cjs', '.ts', '.tsx', '.jsx',
+  '.json', '.xml', '.yaml', '.yml', '.toml', '.csv',
+  '.html', '.htm', '.css', '.scss', '.sass', '.less', '.vue', '.svelte',
+  '.c', '.h', '.cpp', '.cc', '.cxx', '.hpp', '.cs', '.java', '.kt', '.swift',
+  '.go', '.rs', '.php', '.sql', '.env', '.gitignore', '.dockerignore',
+  '.rst', '.tex', '.makefile', '.dockerfile', '.vagrantfile', '.jenkinsfile',
+]
+
+const EDITABLE_NAMES = [
+  'makefile', 'dockerfile', 'vagrantfile', 'jenkinsfile',
+  'readme', 'license', 'changelog', '.gitignore', '.gitattributes',
+  '.dockerignore', '.eslintrc', '.prettierrc', '.npmrc', '.nvmrc',
+]
+
+function canEditFile(fileName: string): boolean {
+  const lower = fileName.toLowerCase()
+  if (EDITABLE_NAMES.includes(lower)) return true
+  const dotIdx = lower.lastIndexOf('.')
+  if (dotIdx === -1) return false
+  return EDITABLE_EXTENSIONS.includes(lower.slice(dotIdx))
+}
+
+function openEditor(entry: FileEntry) {
+  if (!canEditFile(entry.name)) {
+    return
+  }
+  editorEntry.value = entry
+  showEditor.value = true
+  hideContextMenu()
+}
+
+function closeEditor() {
+  showEditor.value = false
+  editorEntry.value = null
+}
+
+function onEditorSaved() {
+  refresh()
+}
+
+function openProperties(entry: FileEntry) {
+  propertiesEntry.value = entry
+  showProperties.value = true
+  hideContextMenu()
+}
+
+function startRename(entry: FileEntry) {
+  hideContextMenu()
+  renameEntry.value = entry
+  renameValue.value = entry.name
+  showRename.value = true
+}
+
+function cancelRename() {
+  showRename.value = false
+  renameEntry.value = null
+  renameValue.value = ''
+}
+
+async function confirmRename() {
+  const entry = renameEntry.value
+  if (!entry) return
+  const newName = renameValue.value.trim()
+  if (!newName || newName === entry.name) {
+    cancelRename()
+    return
+  }
+  const dir = entry.path.substring(0, entry.path.lastIndexOf('/') + 1)
+  const newPath = dir + newName
+  showRename.value = false
+  renameEntry.value = null
+  try {
+    await window.liteSSH.sftpRename(props.sessionId, entry.path, newPath)
+    refresh()
+  } catch (err: any) {
+    error.value = err.message || '重命名失败'
+  }
+}
+
+function closeProperties() {
+  showProperties.value = false
+  propertiesEntry.value = null
+}
+
+function onPropertiesSaved() {
+  refresh()
 }
 
 function initPwdTracker() {
@@ -519,6 +631,7 @@ defineExpose({ handleTerminalCd, clearSessionState })
         :transfers="downloadTransfers"
         direction="download"
         empty-text="暂无下载记录"
+        :get-speed="getSpeed"
         @cancel="cancelTransferAction"
         @remove="removeTransfer"
         @open-folder="openInFolder"
@@ -533,17 +646,40 @@ defineExpose({ handleTerminalCd, clearSessionState })
         :transfers="uploadTransfers"
         direction="upload"
         empty-text="暂无上传记录"
+        :get-speed="getSpeed"
         @cancel="cancelTransferAction"
         @remove="removeTransfer"
       />
     </div>
 
-    <div v-if="contextMenuVisible && contextMenuEntry && !contextMenuEntry.isDirectory" class="context-menu" :style="{ left: contextMenuX + 'px', top: contextMenuY + 'px' }" @click.stop>
-      <button class="context-menu-item" @click="onContextMenuDownload">
+    <div v-if="contextMenuVisible && contextMenuEntry" class="context-menu" :style="{ left: contextMenuX + 'px', top: contextMenuY + 'px' }" @click.stop>
+      <button v-if="!contextMenuEntry.isDirectory" class="context-menu-item" @click="onContextMenuDownload">
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
         </svg>
-        <span>下载文件</span>
+        <span>下载</span>
+      </button>
+      <button
+        v-if="!contextMenuEntry.isDirectory && canEditFile(contextMenuEntry.name)"
+        class="context-menu-item"
+        @click="openEditor(contextMenuEntry)"
+      >
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+        </svg>
+        <span>编辑</span>
+      </button>
+      <button class="context-menu-item" @click="startRename(contextMenuEntry)">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/>
+        </svg>
+        <span>重命名</span>
+      </button>
+      <button class="context-menu-item" @click="openProperties(contextMenuEntry)">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68 1.65 1.65 0 0 0 10 3.17V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+        </svg>
+        <span>属性</span>
       </button>
     </div>
 
@@ -555,6 +691,49 @@ defineExpose({ handleTerminalCd, clearSessionState })
       @confirm="confirmUpload"
       @cancel="cancelUpload"
     />
+
+    <FileEditorModal
+      :visible="showEditor"
+      :session-id="sessionId"
+      :remote-path="editorEntry?.path || ''"
+      :file-name="editorEntry?.name || ''"
+      @close="closeEditor"
+      @saved="onEditorSaved"
+    />
+
+    <FilePropertiesModal
+      :visible="showProperties"
+      :session-id="sessionId"
+      :remote-path="propertiesEntry?.path || ''"
+      :file-name="propertiesEntry?.name || ''"
+      :initial-permissions="propertiesEntry?.permissions?.substring(1) || ''"
+      @close="closeProperties"
+      @refresh="onPropertiesSaved"
+    />
+
+    <div v-if="showRename" class="rename-overlay" @click.self="cancelRename">
+      <div class="rename-modal">
+        <div class="rename-title">重命名</div>
+        <div class="rename-original">
+          <span class="rename-label">原名称</span>
+          <span class="rename-original-name" :title="renameEntry?.name">{{ renameEntry?.name }}</span>
+        </div>
+        <div class="rename-new">
+          <span class="rename-label">新名称</span>
+          <input
+            ref="renameInputRef"
+            v-model="renameValue"
+            class="rename-input"
+            @keydown.enter="confirmRename"
+            @keydown.escape="cancelRename"
+          />
+        </div>
+        <div class="rename-actions">
+          <button class="rename-cancel-btn" @click="cancelRename">取消</button>
+          <button class="rename-confirm-btn" @click="confirmRename">确认</button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -825,6 +1004,8 @@ defineExpose({ handleTerminalCd, clearSessionState })
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
   padding: 4px 0;
   min-width: 140px;
+  max-height: calc(100vh - 8px);
+  overflow-y: auto;
 }
 
 .context-menu-item {
@@ -869,5 +1050,116 @@ defineExpose({ handleTerminalCd, clearSessionState })
   color: var(--accent);
   font-size: 14px;
   font-weight: 600;
+}
+
+.rename-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1001;
+}
+
+.rename-modal {
+  width: 360px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  padding: 18px;
+}
+
+.rename-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 14px;
+}
+
+.rename-original,
+.rename-new {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.rename-new {
+  margin-bottom: 16px;
+}
+
+.rename-label {
+  width: 52px;
+  flex-shrink: 0;
+  font-size: 12px;
+  color: var(--text-secondary);
+  text-align: right;
+}
+
+.rename-original-name {
+  flex: 1;
+  font-size: 13px;
+  color: var(--text-secondary);
+  background: var(--bg-primary);
+  padding: 7px 10px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+}
+
+.rename-input {
+  flex: 1;
+  padding: 7px 10px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  color: var(--text-primary);
+  font-size: 13px;
+  outline: none;
+  font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+}
+
+.rename-input:focus {
+  border-color: var(--accent);
+}
+
+.rename-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.rename-cancel-btn {
+  padding: 6px 16px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background: none;
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.rename-cancel-btn:hover {
+  color: var(--text-primary);
+  border-color: var(--text-secondary);
+}
+
+.rename-confirm-btn {
+  padding: 6px 16px;
+  border: none;
+  border-radius: 6px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.rename-confirm-btn:hover {
+  background: var(--accent-hover);
 }
 </style>

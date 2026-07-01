@@ -635,6 +635,127 @@ hasSession(sessionId: string): boolean {
     })
   }
 
+  async sftpReadFile(sessionId: string, remotePath: string): Promise<string> {
+    const session = this.sessions.get(sessionId)
+    if (!session?.sftp) throw new Error('SFTP not initialized')
+
+    return new Promise((resolve, reject) => {
+      const chunks: Buffer[] = []
+      const stream = session.sftp!.createReadStream(remotePath)
+      let settled = false
+      const finish = (err?: Error) => {
+        if (settled) return
+        settled = true
+        if (err) reject(err)
+        else resolve(Buffer.concat(chunks).toString('utf-8'))
+      }
+      stream.on('data', (chunk: Buffer) => { chunks.push(chunk) })
+      stream.on('end', () => finish())
+      stream.on('error', (err: Error) => finish(err))
+    })
+  }
+
+  async sftpWriteFile(sessionId: string, remotePath: string, content: string): Promise<void> {
+    const session = this.sessions.get(sessionId)
+    if (!session?.sftp) throw new Error('SFTP not initialized')
+
+    return new Promise((resolve, reject) => {
+      const buffer = Buffer.from(content, 'utf-8')
+      const stream = session.sftp!.createWriteStream(remotePath)
+      let settled = false
+      const finish = (err?: Error) => {
+        if (settled) return
+        settled = true
+        if (err) reject(err)
+        else resolve()
+      }
+      stream.on('close', () => finish())
+      stream.on('error', (err: Error) => finish(err))
+      stream.end(buffer)
+    })
+  }
+
+  async sftpRename(sessionId: string, oldPath: string, newPath: string): Promise<void> {
+    const session = this.sessions.get(sessionId)
+    if (!session?.sftp) throw new Error('SFTP not initialized')
+
+    return new Promise((resolve, reject) => {
+      session.sftp!.rename(oldPath, newPath, (err) => {
+        if (err) reject(new Error(`重命名失败: ${err.message}`))
+        else resolve()
+      })
+    })
+  }
+
+  async sftpChmod(sessionId: string, remotePath: string, mode: string, recursive = false): Promise<void> {
+    const session = this.sessions.get(sessionId)
+    if (!session) throw new Error('Session not found')
+
+    const flag = recursive ? '-R ' : ''
+    return new Promise((resolve, reject) => {
+      session.client.exec(`chmod ${flag}${mode} "${remotePath}"`, (err, stream) => {
+        if (err) { reject(new Error(`chmod error: ${err.message}`)); return }
+        let stderr = ''
+        stream.stderr.on('data', (d: Buffer) => { stderr += d.toString() })
+        stream.on('close', () => {
+          if (stderr.trim()) reject(new Error(stderr.trim()))
+          else resolve()
+        })
+        stream.on('error', (e: Error) => reject(e))
+      })
+    })
+  }
+
+  async sftpChown(sessionId: string, remotePath: string, owner: string, group?: string, recursive = false): Promise<void> {
+    const session = this.sessions.get(sessionId)
+    if (!session) throw new Error('Session not found')
+
+    const spec = group ? `${owner}:${group}` : owner
+    const flag = recursive ? '-R ' : ''
+    return new Promise((resolve, reject) => {
+      session.client.exec(`chown ${flag}${spec} "${remotePath}"`, (err, stream) => {
+        if (err) { reject(new Error(`chown error: ${err.message}`)); return }
+        let stderr = ''
+        stream.stderr.on('data', (d: Buffer) => { stderr += d.toString() })
+        stream.on('close', () => {
+          if (stderr.trim()) reject(new Error(stderr.trim()))
+          else resolve()
+        })
+        stream.on('error', (e: Error) => reject(e))
+      })
+    })
+  }
+
+  async sftpStat(sessionId: string, remotePath: string): Promise<{
+    mode: string
+    size: number
+    uid: number
+    gid: number
+    atime: number
+    mtime: number
+    owner: string
+    group: string
+  }> {
+    const session = this.sessions.get(sessionId)
+    if (!session?.sftp) throw new Error('SFTP not initialized')
+
+    return new Promise((resolve, reject) => {
+      session.sftp!.stat(remotePath, (err, stats) => {
+        if (err) { reject(new Error(`stat error: ${err.message}`)); return }
+        resolve({
+          mode: (stats.mode & 0o777).toString(8).padStart(3, '0'),
+          size: stats.size,
+          uid: stats.uid,
+          gid: stats.gid,
+          atime: stats.atime,
+          mtime: stats.mtime,
+          owner: String(stats.uid),
+          group: String(stats.gid),
+        })
+      })
+    })
+  }
+
   async sftpExec(sessionId: string, command: string, timeoutMs = 10000): Promise<string> {
     const session = this.sessions.get(sessionId)
     if (!session) throw new Error('Session not found')
